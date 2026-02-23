@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vllm-omni-reviewer": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": "/Users/elle/code/test/vllm-omni-reviewer",
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  }
+}
