@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """MCP server for reviewing vllm-omni PRs."""
 
 from __future__ import annotations
@@ -156,17 +159,78 @@ def review_pr_with_inline(pr_number: int) -> str:
 2. Call parse_diff_for_review_lines to identify lines needing comments
 3. Call fetch_linked_refs to get context from referenced issues/PRs
 4. Call get_knowledge to load project conventions and past review notes
-5. Analyze the diff and generate:
-   - A brief summary (3-5 sentences) highlighting key issues
-   - Specific inline comments for problematic lines
+5. Analyze the diff critically and generate:
+
+   **IMPORTANT: Inline comments can ONLY be posted on lines returned by parse_diff_for_review_lines.**
+   These are lines that were added or modified in the PR. You cannot comment on unchanged lines
+   or lines not in the diff. If you need to mention issues with unchanged code, include them in
+   the summary instead.
+
+   **Summary Structure (required):**
+   - Brief overview of what the PR does
+   - **Pros:** List specific strengths (e.g., good test coverage, clean design, backward compatible)
+   - **Cons:** List concerns and issues (e.g., missing tests, unclear edge cases, performance questions)
+   - Overall assessment
+
+   **Inline Comments:**
+   - Post as many comments as needed based on actual issues found (not a fixed number)
+   - Be critical and question assumptions
+   - Focus on substantive issues, not just praise
+
 6. Format inline comments as a list of dicts with keys: path, line, body
+   **CRITICAL: Only use path and line values from parse_diff_for_review_lines output.**
+   Do not invent line numbers or comment on files/lines not in that list.
 7. Call post_review_with_inline_comments to post everything
 8. Call save_review to persist the review summary
 
-Focus on:
-- Concise, actionable feedback
-- Specific line-level issues (bugs, style, security, performance)
-- Clear explanations with examples where helpful"""
+**Critical Review Guidelines:**
+
+**Test Coverage (HIGH PRIORITY):**
+- Does the PR include tests for new functionality?
+- Are edge cases tested?
+- For bug fixes: Is there a regression test?
+- For performance claims: Are there benchmarks with before/after data?
+- For new features: Are error paths tested?
+- Question: "What happens if X fails?" "How is Y validated?"
+
+**Performance Claims:**
+- If PR claims performance improvement, demand measurements
+- Look for: memory usage data, latency numbers, throughput comparisons
+- Question vague claims like "significant improvement" without data
+- Check if benchmarks are realistic (not toy examples)
+
+**Design & Architecture:**
+- Does this fit the existing architecture?
+- Are there simpler alternatives?
+- Is this over-engineered or under-engineered?
+- Question: "Why this approach vs X?" "What's the trade-off?"
+
+**Correctness & Edge Cases:**
+- What edge cases are not handled?
+- Are error messages helpful?
+- Is input validation sufficient?
+- Are there race conditions or concurrency issues?
+
+**Documentation & Type Safety:**
+- Are type annotations complete and correct?
+- Is user-facing documentation updated?
+- Are breaking changes documented?
+
+**Code Quality:**
+- Are there code smells (duplication, complexity, unclear naming)?
+- Does it follow project conventions?
+- Are there security concerns?
+
+**Be Specific:**
+- Instead of "Good implementation" → "The lock timeout calculation at line X correctly prevents deadlocks"
+- Instead of "Nice test coverage" → "Tests cover the happy path but missing validation for empty input"
+- Instead of "Well done" → Point out actual issues or ask probing questions
+
+**Number of Comments:**
+- Post as many inline comments as there are substantive issues
+- A small doc fix might need 0-2 comments
+- A large feature might need 8-12 comments
+- Don't artificially limit or pad the number of comments"""
 
 
 # -- Entry point ---------------------------------------------------------

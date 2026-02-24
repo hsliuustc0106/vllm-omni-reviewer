@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """GitHub API client for vllm-project/vllm-omni."""
 
 from __future__ import annotations
@@ -202,14 +205,15 @@ class GitHubClient:
 
         if result.returncode != 0:
             # Fallback to formatted comment if inline comment fails
-            formatted_body = f"**{path}:{line}**\n\n{body}"
+            error_msg = result.stderr.strip()
+            formatted_body = f"**{path}:{line}**\n\n{body}\n\n---\n*Note: Could not post as inline comment. Error: {error_msg}*"
             result = subprocess.run(
                 ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
                 capture_output=True, text=True,
             )
             if result.returncode != 0:
                 raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
-            return {"posted_via": "gh_cli_fallback", "pr_number": pr_number, "path": path, "line": line}
+            return {"posted_via": "gh_cli_fallback", "pr_number": pr_number, "path": path, "line": line, "error": error_msg}
 
         return {"posted_via": "gh_api_inline", "pr_number": pr_number, "path": path, "line": line}
 
