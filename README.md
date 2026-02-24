@@ -80,10 +80,15 @@ python server.py
 | `save_review` | Persist a review summary for future context |
 | `add_knowledge` | Add or update a knowledge base note |
 | `post_review_comment` | Post a review comment on a PR (APPROVE, REQUEST_CHANGES, or COMMENT) |
+| `post_inline_comment` | Post a line-specific comment on a PR file |
+| `parse_diff_for_review_lines` | Extract reviewable lines from a diff with context |
+| `post_review_with_inline_comments` | Post summary + inline comments in one workflow |
 
-## Review Workflow
+## Review Workflows
 
-The server includes a `review_pr` prompt template that guides the full workflow:
+### Standard Review (`review_pr` prompt)
+
+The traditional workflow for comprehensive reviews:
 
 1. Fetch the PR with diff and discussion
 2. Resolve linked issues/PRs for context
@@ -92,6 +97,37 @@ The server includes a `review_pr` prompt template that guides the full workflow:
 5. Provide a structured review (bugs, logic, performance, security, style, tests)
 6. Save the review summary to the knowledge base
 7. Optionally post comments to GitHub
+
+### Inline Comment Review (`review_pr_with_inline` prompt)
+
+Streamlined workflow for posting concise summaries with targeted inline comments:
+
+1. Fetch the PR metadata and diff
+2. Parse the diff to identify lines needing comments
+3. Load context from linked issues and knowledge base
+4. Generate a brief summary (3-5 sentences) highlighting key issues
+5. Create specific inline comments for problematic lines
+6. Post the summary followed by inline comments sequentially
+7. Save the review to the knowledge base
+
+**Example inline comment format:**
+
+```python
+inline_comments = [
+    {
+        "path": "examples/offline_inference/bagel/README.md",
+        "line": 180,
+        "body": "Consider adding context about why this port differs from the online serving example."
+    },
+    {
+        "path": "examples/online_serving/bagel/README.md",
+        "line": 120,
+        "body": "Port mismatch detected: this uses 8000 but offline example uses 8080."
+    }
+]
+```
+
+The `post_review_with_inline_comments` tool handles posting the summary first, then posts each inline comment one-by-one. It continues posting even if individual comments fail and returns detailed status for each operation.
 
 ## Project Structure
 

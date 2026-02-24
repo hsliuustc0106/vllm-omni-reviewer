@@ -218,6 +218,141 @@ class GitHubClient:
         pr = self._get(f"/pulls/{pr_number}")
         return pr["head"]["sha"]
 
+    # -- Inline comment workflow -----------------------------------------
+
+    def parse_diff_for_review_lines(self, diff: str) -> list[dict]:
+        """Parse a diff and extract lines suitable for inline comments.
+
+        Returns list of dicts with:
+        - path: file path
+        - line: line number in the new version
+        - content: actual line content
+        - context: surrounding lines for context (3 before/after)
+
+        Focuses on added lines (+ prefix) in the diff.
+        """
+        lines = diff.split("\n")
+        results = []
+        current_file = None
+        current_line = 0
+        context_buffer = []
+
+        for i, line in enumerate(lines):
+            # Track file being modified
+            if line.startswith("diff --git"):
+                # Extract file path from "diff --git a/path b/path"
+                parts = line.split()
+                if len(parts) >= 4:
+                    current_file = parts[3][2:]  # Remove "b/" prefix
+                context_buffer = []
+                continue
+
+            # Track line numbers from hunk headers
+            if line.startswith("@@"):
+                # Parse @@ -old_start,old_count +new_start,new_count @@
+                match = re.search(r"\+(\d+)", line)
+                if match:
+                    current_line = int(match.group(1))
+                context_buffer = []
+                continue
+
+            # Skip if we don't have a file context yet
+            if current_file is None:
+                continue
+
+            # Track added lines
+            if line.startswith("+") and not line.startswith("+++"):
+                # Get context (last 3 lines from buffer)
+                context_before = context_buffer[-3:] if len(context_buffer) >= 3 else context_buffer[:]
+
+                # Get context after (next 3 lines)
+                context_after = []
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    next_line = lines[j]
+                    if next_line.startswith("@@") or next_line.startswith("diff --git"):
+                        break
+                    if not next_line.startswith("---") and not next_line.startswith("+++"):
+                        context_after.append(next_line)
+
+                results.append({
+                    "path": current_file,
+                    "line": current_line,
+                    "content": line[1:],  # Remove + prefix
+                    "context": "\n".join(context_before + [line] + context_after),
+                })
+                current_line += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                # Deleted line, don't increment line counter
+                context_buffer.append(line)
+            elif not line.startswith("\\"):
+                # Context line (no prefix) or other content
+                if not line.startswith("+++") and not line.startswith("---"):
+                    context_buffer.append(line)
+                    current_line += 1
+
+        return results
+
+    def post_review_with_inline_comments(
+        self,
+        pr_number: int,
+        summary: str,
+        inline_comments: list[dict],
+        event: str = "COMMENT",
+    ) -> dict:
+        """Post a review summary followed by inline comments one-by-one.
+
+        Args:
+            pr_number: PR number
+            summary: Brief overall review summary
+            inline_comments: List of dicts with keys: path, line, body
+            event: Review event (COMMENT, APPROVE, REQUEST_CHANGES)
+
+        Returns:
+            Dict with summary of posted comments and success/failure status
+        """
+        results = {
+            "summary_posted": False,
+            "summary_error": None,
+            "inline_comments": [],
+            "total": len(inline_comments),
+            "successful": 0,
+            "failed": 0,
+        }
+
+        # Post summary first
+        try:
+            self.post_review_comment(pr_number, summary, event)
+            results["summary_posted"] = True
+        except Exception as e:
+            results["summary_error"] = str(e)
+            # Continue with inline comments even if summary fails
+
+        # Post inline comments one-by-one
+        for comment in inline_comments:
+            try:
+                path = comment["path"]
+                line = comment["line"]
+                body = comment["body"]
+
+                result = self.post_inline_comment(pr_number, path, line, body)
+                results["inline_comments"].append({
+                    "path": path,
+                    "line": line,
+                    "status": "success",
+                    "result": result,
+                })
+                results["successful"] += 1
+            except Exception as e:
+                results["inline_comments"].append({
+                    "path": comment.get("path", "unknown"),
+                    "line": comment.get("line", 0),
+                    "status": "failed",
+                    "error": str(e),
+                })
+                results["failed"] += 1
+
+        return results
+
     # -- Helpers ---------------------------------------------------------
 
     def _get(self, path: str, params: dict | None = None) -> dict | list:

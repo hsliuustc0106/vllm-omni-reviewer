@@ -85,6 +85,49 @@ def post_inline_comment(pr_number: int, path: str, line: int, body: str) -> dict
     return _gh.post_inline_comment(pr_number, path, line, body)
 
 
+@mcp.tool()
+def parse_diff_for_review_lines(diff: str) -> list[dict]:
+    """Parse a diff and extract lines suitable for inline comments.
+
+    Returns list of dicts with path, line, content, and context for each added line.
+    Useful for identifying specific lines that may need review comments.
+
+    Args:
+        diff: Unified diff text (from fetch_pr)
+
+    Returns:
+        List of dicts with keys: path, line, content, context
+    """
+    return _gh.parse_diff_for_review_lines(diff)
+
+
+@mcp.tool()
+def post_review_with_inline_comments(
+    pr_number: int,
+    summary: str,
+    inline_comments: list[dict],
+    event: str = "COMMENT",
+) -> dict:
+    """Post a review summary followed by inline comments one-by-one.
+
+    This orchestrates the complete review posting workflow:
+    1. Posts the summary as a general review comment
+    2. Posts each inline comment sequentially
+    3. Continues posting even if individual comments fail
+    4. Returns detailed status for each operation
+
+    Args:
+        pr_number: PR number
+        summary: Brief overall review summary (3-5 sentences)
+        inline_comments: List of dicts with keys: path, line, body
+        event: Review event - COMMENT, APPROVE, or REQUEST_CHANGES
+
+    Returns:
+        Dict with summary_posted, inline_comments list, successful/failed counts
+    """
+    return _gh.post_review_with_inline_comments(pr_number, summary, inline_comments, event)
+
+
 # -- Prompt template -----------------------------------------------------
 
 
@@ -102,6 +145,28 @@ Steps:
    security, style, and test coverage
 6. Call save_review to persist a summary for future context
 7. Ask if I want to post any comments to the PR on GitHub"""
+
+
+@mcp.prompt()
+def review_pr_with_inline(pr_number: int) -> str:
+    """Review a PR and post concise summary with inline comments."""
+    return f"""Review PR #{pr_number} with inline comments workflow:
+
+1. Call fetch_pr to get PR metadata and diff
+2. Call parse_diff_for_review_lines to identify lines needing comments
+3. Call fetch_linked_refs to get context from referenced issues/PRs
+4. Call get_knowledge to load project conventions and past review notes
+5. Analyze the diff and generate:
+   - A brief summary (3-5 sentences) highlighting key issues
+   - Specific inline comments for problematic lines
+6. Format inline comments as a list of dicts with keys: path, line, body
+7. Call post_review_with_inline_comments to post everything
+8. Call save_review to persist the review summary
+
+Focus on:
+- Concise, actionable feedback
+- Specific line-level issues (bugs, style, security, performance)
+- Clear explanations with examples where helpful"""
 
 
 # -- Entry point ---------------------------------------------------------
