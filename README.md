@@ -12,11 +12,19 @@ An MCP server for reviewing pull requests in [vllm-project/vllm-omni](https://gi
 
 ## Setup
 
-Requires Python 3.10+ and a [GitHub personal access token](https://github.com/settings/tokens) with repo read access.
+Requires Python 3.10+.
+
+### Authentication (choose one)
+
+The server uses GitHub API for most operations. Authentication is handled in this priority order:
+
+1. **GitHub CLI (`gh`)** — Default, recommended. Run `gh auth login` to authenticate.
+2. **Environment variable** — Fallback. Set `GITHUB_TOKEN` with a [personal access token](https://github.com/settings/tokens).
+
+### Installation
 
 ```bash
 pip install -e .
-export GITHUB_TOKEN=<your_token>
 ```
 
 ## Usage
@@ -24,6 +32,20 @@ export GITHUB_TOKEN=<your_token>
 ### As an MCP server
 
 Add the server to your MCP client config (e.g. `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "vllm-omni-reviewer": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": "/path/to/vllm-omni-reviewer"
+    }
+  }
+}
+```
+
+If using `GITHUB_TOKEN` instead of `gh` CLI, add the environment variable:
 
 ```json
 {
