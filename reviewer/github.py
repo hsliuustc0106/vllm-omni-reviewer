@@ -21,7 +21,17 @@ _REF_PATTERNS = [
 
 class GitHubClient:
     def __init__(self, token: str | None = None):
-        token = token or os.environ.get("GITHUB_TOKEN", "")
+        if token is None:
+            # First try to get token from gh CLI
+            result = subprocess.run(
+                ["gh", "auth", "token"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                token = result.stdout.strip()
+            else:
+                # Fall back to environment variable
+                token = os.environ.get("GITHUB_TOKEN", "")
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
