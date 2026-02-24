@@ -172,29 +172,103 @@ class GitHubClient:
         return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "event": event}
 
     def post_inline_comment(self, pr_number: int, path: str, line: int, body: str) -> dict:
-        """Post a line-specific comment on a PR.
+        """Post an inline comment on a specific line of a PR file.
 
-        Note: GitHub's inline comment API requires diff positions which are complex to calculate.
-        This implementation posts a regular comment with file and line information formatted in the body.
+        Note: GitHub's inline comment API requires the `position` parameter (diff position).
+        For complex diffs, finding the exact position is challenging.
 
         Args:
             pr_number: PR number
             path: File path in the repo
-            line: Line number to comment on
+            line: Line number to comment on (head version)
             body: Comment text
 
         Returns:
             dict with comment details
         """
-        # Format as a line-specific comment for readability
-        formatted_body = f"**{path}:{line}**\n\n{body}"
-        result = subprocess.run(
-            ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
-        return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "path": path, "line": line}
+        # Get the diff to find the position parameter
+        diff = self.fetch_diff(pr_number)
+
+        # Try to find the position for this file/line
+        position = self._find_diff_position(diff, path, line)
+
+        if position is None:
+            # Fallback to formatted comment if we can't find the position
+            formatted_body = f"**{path}:{line}**\n\n{body}"
+            result = subprocess.run(
+                ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
+            return {"posted_via": "gh_cli_comment_fallback", "pr_number": pr_number, "path": path, "line": line}
+
+        # Post inline comment using REST API
+        url = f"{BASE}/pulls/{pr_number}/comments"
+        payload = {
+            "body": body,
+            "path": path,
+            "position": position,
+            "line": line,
+            "side": "RIGHT",
+            "commit_id": self._get_pr_head_sha(pr_number),
+        }
+        resp = self._http.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _find_diff_position(self, diff: str, path: str, line: int) -> int | None:
+        """Find the diff position for a given file path and line number.
+
+        GitHub uses position (the index in the diff hunk), not line numbers.
+        This parses the unified diff to find the correct position.
+
+        Returns None if the line cannot be found in the diff.
+        """
+        lines = diff.split('\n')
+
+        current_file = None
+        hunk_new_start = 0  # Line number at start of hunk (new version)
+        hunk_new_offset = 0  # Offset into hunk (number of lines seen in diff)
+        diff_lines_after_hunk = []  # Lines in the diff after hunk header
+
+        for diff_line in lines:
+            # Check for file header
+            file_match = re.match(r'^\+\+\+ b/(.+)$', diff_line)
+            if file_match:
+                current_file = file_match.group(1)
+                hunk_new_start = 0
+                hunk_new_offset = 0
+                diff_lines_after_hunk = []
+                continue
+
+            # Skip files that don't match our target
+            if current_file != path:
+                continue
+
+            # Check for hunk header: @@ -old_start,count +new_start,count @@
+            hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', diff_line)
+            if hunk_match:
+                hunk_new_start = int(hunk_match.group(1))
+                hunk_new_offset = 0
+                diff_lines_after_hunk = []
+                continue
+
+            # Skip hunk/file markers
+            if diff_line.startswith('@@') or diff_line.startswith('---') or diff_line.startswith('+++'):
+                continue
+
+            # Check if we found our target line (could be added, removed, or context line)
+            # The offset counts all lines in the hunk, whether +, -, or context
+            if diff_line.startswith('+') or diff_line.startswith(' ') or diff_line.startswith('-'):
+                hunk_new_offset += 1
+                diff_lines_after_hunk.append(diff_line)
+                # Current line in new file would be at this position
+                current_line = hunk_new_start + hunk_new_offset - 1
+                if current_line == line:
+                    return len(diff_lines_after_hunk)
+
+        return None
 
     def _get_pr_head_sha(self, pr_number: int) -> str:
         """Get the head commit SHA of a PR."""
