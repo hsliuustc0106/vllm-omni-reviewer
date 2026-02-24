@@ -70,6 +70,21 @@ def post_review_comment(pr_number: int, body: str, event: str = "COMMENT") -> di
     return _gh.post_review_comment(pr_number, body, event)
 
 
+@mcp.tool()
+def post_inline_comment(pr_number: int, path: str, line: int, body: str) -> dict:
+    """Post a line-specific comment on a PR file.
+
+    Args:
+        pr_number: PR number
+        path: File path in the repo (e.g., "src/file.py")
+        line: Line number to comment on
+        body: Comment text
+
+    Note: Posts a comment with formatted file:line reference.
+    """
+    return _gh.post_inline_comment(pr_number, path, line, body)
+
+
 # -- Prompt template -----------------------------------------------------
 
 

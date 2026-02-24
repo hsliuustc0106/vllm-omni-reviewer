@@ -171,6 +171,36 @@ class GitHubClient:
             raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
         return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "event": event}
 
+    def post_inline_comment(self, pr_number: int, path: str, line: int, body: str) -> dict:
+        """Post a line-specific comment on a PR.
+
+        Note: GitHub's inline comment API requires diff positions which are complex to calculate.
+        This implementation posts a regular comment with file and line information formatted in the body.
+
+        Args:
+            pr_number: PR number
+            path: File path in the repo
+            line: Line number to comment on
+            body: Comment text
+
+        Returns:
+            dict with comment details
+        """
+        # Format as a line-specific comment for readability
+        formatted_body = f"**{path}:{line}**\n\n{body}"
+        result = subprocess.run(
+            ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
+        return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "path": path, "line": line}
+
+    def _get_pr_head_sha(self, pr_number: int) -> str:
+        """Get the head commit SHA of a PR."""
+        pr = self._get(f"/pulls/{pr_number}")
+        return pr["head"]["sha"]
+
     # -- Helpers ---------------------------------------------------------
 
     def _get(self, path: str, params: dict | None = None) -> dict | list:
