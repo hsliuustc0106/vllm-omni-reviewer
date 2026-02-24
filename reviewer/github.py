@@ -201,21 +201,22 @@ class GitHubClient:
             )
             if result.returncode != 0:
                 raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
-            return {"posted_via": "gh_cli_comment_fallback", "pr_number": pr_number, "path": path, "line": line}
+            return {"posted_via": "gh_cli_fallback", "pr_number": pr_number, "path": path, "line": line}
 
-        # Post inline comment using REST API
-        url = f"{BASE}/pulls/{pr_number}/comments"
-        payload = {
-            "body": body,
-            "path": path,
-            "position": position,
-            "line": line,
-            "side": "RIGHT",
-            "commit_id": self._get_pr_head_sha(pr_number),
-        }
-        resp = self._http.post(url, json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        # Post inline comment using gh api (uses gh CLI auth)
+        commit_id = self._get_pr_head_sha(pr_number)
+        result = subprocess.run([
+            "gh", "api", f"repos/{REPO}/pulls/{pr_number}/comments",
+            "-X", "POST",
+            "-f", f"body={body}",
+            "-f", f"path={path}",
+            "-f", f"position={position}",
+            "-f", f"commit_id={commit_id}",
+        ], capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise RuntimeError(f"gh api failed: {result.stderr.strip()}")
+        return {"posted_via": "gh_api_inline", "pr_number": pr_number, "path": path, "line": line}
 
     def _find_diff_position(self, diff: str, path: str, line: int) -> int | None:
         """Find the diff position for a given file path and line number.
@@ -228,45 +229,45 @@ class GitHubClient:
         lines = diff.split('\n')
 
         current_file = None
-        hunk_new_start = 0  # Line number at start of hunk (new version)
-        hunk_new_offset = 0  # Offset into hunk (number of lines seen in diff)
-        diff_lines_after_hunk = []  # Lines in the diff after hunk header
+        in_target_file = False
+        hunk_new_start = 0
+        diff_position = 0  # Position in diff (1-indexed after hunk header)
+        new_file_line = 0  # Line number in new file
 
         for diff_line in lines:
             # Check for file header
             file_match = re.match(r'^\+\+\+ b/(.+)$', diff_line)
             if file_match:
                 current_file = file_match.group(1)
-                hunk_new_start = 0
-                hunk_new_offset = 0
-                diff_lines_after_hunk = []
+                in_target_file = (current_file == path)
                 continue
 
-            # Skip files that don't match our target
-            if current_file != path:
+            if not in_target_file:
                 continue
 
             # Check for hunk header: @@ -old_start,count +new_start,count @@
             hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', diff_line)
             if hunk_match:
                 hunk_new_start = int(hunk_match.group(1))
-                hunk_new_offset = 0
-                diff_lines_after_hunk = []
+                new_file_line = hunk_new_start - 1  # Will increment on first content line
+                diff_position = 0
                 continue
 
-            # Skip hunk/file markers
+            # Skip diff metadata lines
             if diff_line.startswith('@@') or diff_line.startswith('---') or diff_line.startswith('+++'):
                 continue
 
-            # Check if we found our target line (could be added, removed, or context line)
-            # The offset counts all lines in the hunk, whether +, -, or context
+            # Process content lines
             if diff_line.startswith('+') or diff_line.startswith(' ') or diff_line.startswith('-'):
-                hunk_new_offset += 1
-                diff_lines_after_hunk.append(diff_line)
-                # Current line in new file would be at this position
-                current_line = hunk_new_start + hunk_new_offset - 1
-                if current_line == line:
-                    return len(diff_lines_after_hunk)
+                diff_position += 1
+
+                # Only advance new file line for lines that exist in the new file
+                if diff_line.startswith('+') or diff_line.startswith(' '):
+                    new_file_line += 1
+
+                # Check if we found our target line
+                if new_file_line == line and not diff_line.startswith('-'):
+                    return diff_position
 
         return None
 
