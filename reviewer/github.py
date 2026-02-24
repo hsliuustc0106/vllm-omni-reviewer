@@ -160,32 +160,16 @@ class GitHubClient:
     # -- Post review -----------------------------------------------------
 
     def post_review_comment(self, pr_number: int, body: str, event: str = "COMMENT") -> dict:
-        """Post a review on a PR via ``gh`` CLI. event: APPROVE, REQUEST_CHANGES, or COMMENT.
-        Falls back to posting a regular comment if the review API fails (e.g., insufficient scopes)."""
-        event_flag = {"APPROVE": "--approve", "REQUEST_CHANGES": "--request-changes"}.get(event, "--comment")
+        """Post a comment on a PR via ``gh`` CLI REST API (not GraphQL).
+        event: APPROVE, REQUEST_CHANGES, or COMMENT.
+        Note: Uses regular comment endpoint instead of review endpoint to avoid GraphQL scope requirements."""
         result = subprocess.run(
-            ["gh", "pr", "review", str(pr_number), "--repo", REPO, event_flag, "--body", body],
+            ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", body],
             capture_output=True, text=True,
         )
         if result.returncode != 0:
-            # Fallback: post as a regular comment
-            # This handles cases where gh token lacks scopes for GraphQL review endpoint
-            comment_result = subprocess.run(
-                ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", body],
-                capture_output=True, text=True,
-            )
-            if comment_result.returncode != 0:
-                raise RuntimeError(
-                    f"gh pr review failed: {result.stderr.strip()}\n"
-                    f"Fallback gh pr comment also failed: {comment_result.stderr.strip()}"
-                )
-            return {
-                "posted_via": "gh_cli_comment_fallback",
-                "pr_number": pr_number,
-                "event": "COMMENT",
-                "note": "Posted as comment due to review API failure (likely insufficient token scopes)",
-            }
-        return {"posted_via": "gh_cli_review", "pr_number": pr_number, "event": event}
+            raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
+        return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "event": event}
 
     # -- Helpers ---------------------------------------------------------
 
