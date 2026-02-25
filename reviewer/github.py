@@ -21,6 +21,54 @@ _REF_PATTERNS = [
     re.compile(r"(?<!\w)#(\d+)"),
 ]
 
+# PR type patterns - maps regex patterns to normalized type names
+_PR_TYPE_PATTERNS = [
+    (re.compile(r"\[(?:Bugfix|BugFix|Bug Fix|Bug)\]", re.IGNORECASE), "bugfix"),
+    (re.compile(r"\[(?:Feat|Feature)\]", re.IGNORECASE), "feature"),
+    (re.compile(r"\[(?:Model|New Reward Model)\]", re.IGNORECASE), "model"),
+    (re.compile(r"\[Quantization\]", re.IGNORECASE), "quantization"),
+    (re.compile(r"\[Doc\]", re.IGNORECASE), "documentation"),
+    (re.compile(r"\[(?:CI|CI/Build|Test)\]", re.IGNORECASE), "ci"),
+    (re.compile(r"\[(?:NPU|XPU|ROCM)\]", re.IGNORECASE), "platform"),
+    (re.compile(r"\[Performance\]", re.IGNORECASE), "performance"),
+    (re.compile(r"\[(?:API|Frontend)\]", re.IGNORECASE), "api"),
+    (re.compile(r"\[(?:Refactor|Chore|Misc)\]", re.IGNORECASE), "refactor"),
+    (re.compile(r"\[(?:WIP|DO NOT MERGE THIS)\]", re.IGNORECASE), "wip"),
+]
+
+
+def extract_pr_type(title: str) -> str | None:
+    """Extract PR type from title prefix like [Bugfix], [Feat], etc.
+
+    Returns normalized type (lowercase) or None if no recognized prefix found.
+
+    Examples:
+        "[Bugfix] Fix race condition" -> "bugfix"
+        "[Feat]: Add async support" -> "feature"
+        "[Quantization] FP8 for VAE" -> "quantization"
+        "Fix typo" -> None
+    """
+    for pattern, type_name in _PR_TYPE_PATTERNS:
+        if pattern.search(title):
+            return type_name
+    return None
+
+
+def detect_pr_types(title: str) -> list[tuple[str, str]]:
+    """Detect all PR types in title (supports multiple types).
+
+    Returns list of (normalized_type, matched_prefix) tuples.
+
+    Examples:
+        "[Bugfix][NPU] Fix crash" -> [("bugfix", "[Bugfix]"), ("platform", "[NPU]")]
+    """
+    results = []
+    for pattern, type_name in _PR_TYPE_PATTERNS:
+        match = pattern.search(title)
+        if match:
+            results.append((type_name, match.group(0)))
+    return results
+
 
 class GitHubClient:
     def __init__(self, token: str | None = None):

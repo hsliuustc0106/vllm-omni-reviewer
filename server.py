@@ -104,6 +104,74 @@ def parse_diff_for_review_lines(diff: str) -> list[dict]:
     return _gh.parse_diff_for_review_lines(diff)
 
 
+def _extract_section(markdown: str, heading: str) -> str:
+    """Extract content under a specific heading from markdown."""
+    lines = markdown.split("\n")
+    in_section = False
+    section_lines = []
+
+    for line in lines:
+        if line.startswith("## ") and line[3:].strip() == heading:
+            in_section = True
+            continue
+        elif line.startswith("## ") and in_section:
+            # Hit next section, stop
+            break
+        elif in_section:
+            section_lines.append(line)
+
+    return "\n".join(section_lines).strip()
+
+
+@mcp.tool()
+def get_pr_type_guidance(pr_title: str) -> dict:
+    """Extract PR type from title and return type-specific review guidance.
+
+    Args:
+        pr_title: PR title (e.g., "[Bugfix] Fix race condition")
+
+    Returns:
+        {
+            "pr_type": "bugfix" | "feature" | ... | None,
+            "guidance": "Type-specific review focus areas...",
+            "detected_from": "[Bugfix]" (the actual prefix found),
+            "all_types": [("bugfix", "[Bugfix]")] (for multi-type PRs)
+        }
+    """
+    from reviewer.github import detect_pr_types
+
+    # Detect all types (supports multi-type PRs)
+    all_types = detect_pr_types(pr_title)
+
+    if not all_types:
+        return {
+            "pr_type": None,
+            "guidance": "No specific PR type detected. Use general review guidelines from conventions.md.",
+            "detected_from": None,
+            "all_types": []
+        }
+
+    # Use primary type (first detected)
+    primary_type, detected_prefix = all_types[0]
+
+    # Load type-specific guidance from knowledge base
+    try:
+        guidance_doc = _kb.load_file("pr-type-guidance.md")
+        # Extract section for this type
+        guidance = _extract_section(guidance_doc, primary_type)
+        if not guidance:
+            guidance = f"Type '{primary_type}' detected but guidance section not found. Use general guidelines."
+    except FileNotFoundError:
+        guidance = f"Type '{primary_type}' detected but guidance file not found. Use general guidelines."
+
+    return {
+        "pr_type": primary_type,
+        "guidance": guidance,
+        "detected_from": detected_prefix,
+        "all_types": all_types
+    }
+
+
 @mcp.tool()
 def post_review_with_inline_comments(
     pr_number: int,
@@ -142,12 +210,33 @@ def review_pr(pr_number: int) -> str:
 Steps:
 1. Call fetch_pr to get the PR diff, metadata, and discussion
 2. Call fetch_linked_refs to get context from referenced issues/PRs
-3. Call get_knowledge to load project conventions and past review notes
-4. If any changed files need more surrounding context, use fetch_file
-5. Provide a structured review covering: bugs, logic errors, performance,
+3. Call get_pr_type_guidance with the PR title to get type-specific review focus
+4. Call get_knowledge to load project conventions, architecture, and vllm-omni concepts
+5. If any changed files need more surrounding context, use fetch_file
+6. Provide a structured review covering: bugs, logic errors, performance,
    security, style, and test coverage
-6. Call save_review to persist a summary for future context
-7. Ask if I want to post any comments to the PR on GitHub"""
+7. Call save_review to persist a summary for future context
+8. Ask if I want to post any comments to the PR on GitHub
+
+IMPORTANT: Read vllm-omni-concepts.md from the knowledge base to understand:
+- Omni vs AsyncOmni (sync vs async_chunk execution)
+- Multi-stage pipeline architecture and stage-level concurrency
+- OmniChunkTransferAdapter and SharedMemoryConnector
+- Shared infrastructure between online serving and offline inference
+- Memory management patterns and risks
+- Example code vs production code expectations
+
+**Type-Specific Review Focus:**
+- Apply the guidance from get_pr_type_guidance to prioritize review areas
+- Use linked issue context to validate the PR addresses the problem correctly
+- For [Bugfix]: Check if issue describes reproduction steps, verify tests cover them
+- For [Feat]: Check if issue describes requirements, verify implementation matches
+- For [Quantization]: Check if issue mentions target metrics, verify measurements provided
+- Combine type-specific focus with general vllm-omni architecture knowledge
+- If no type detected, use general review guidelines
+
+Use this knowledge to provide context-aware reviews that understand vllm-omni's
+unique architecture and avoid over-engineering comments on example code."""
 
 
 @mcp.prompt()
@@ -158,8 +247,29 @@ def review_pr_with_inline(pr_number: int) -> str:
 1. Call fetch_pr to get PR metadata and diff
 2. Call parse_diff_for_review_lines to identify lines needing comments
 3. Call fetch_linked_refs to get context from referenced issues/PRs
-4. Call get_knowledge to load project conventions and past review notes
-5. Analyze the diff critically and generate:
+4. Call get_pr_type_guidance with the PR title to get type-specific review focus
+5. Call get_knowledge to load project conventions, architecture, and vllm-omni concepts
+6. Analyze the diff critically and generate:
+
+   **IMPORTANT: Read vllm-omni-concepts.md to understand:**
+   - Omni vs AsyncOmni (sync vs async_chunk execution)
+   - Multi-stage pipeline architecture and stage-level concurrency
+   - Shared infrastructure between online serving and offline inference
+   - Memory management patterns and risks
+   - Example code vs production code expectations
+
+   Use this knowledge to provide context-aware reviews and avoid over-engineering
+   comments on example code (e.g., don't ask about trio/curio, Jupyter edge cases).
+
+   **Type-Specific Review Focus:**
+   - Apply the guidance from get_pr_type_guidance to prioritize review areas
+   - Cross-reference with linked issues to understand the problem being solved
+   - For [Bugfix]: Verify the fix addresses the exact issue described, check for regression tests
+   - For [Feat]: Verify implementation matches feature requirements from the issue
+   - For [Quantization]: Check if measurements match expectations from the issue
+   - For [Model]: Verify model-specific requirements from the issue are met
+   - For other types: Follow the specific guidance provided
+   - Use issue context to validate PR scope and completeness
 
    **IMPORTANT: Inline comments can ONLY be posted on lines returned by parse_diff_for_review_lines.**
    These are lines that were added or modified in the PR. You cannot comment on unchanged lines
@@ -177,11 +287,11 @@ def review_pr_with_inline(pr_number: int) -> str:
    - Be critical and question assumptions
    - Focus on substantive issues, not just praise
 
-6. Format inline comments as a list of dicts with keys: path, line, body
+7. Format inline comments as a list of dicts with keys: path, line, body
    **CRITICAL: Only use path and line values from parse_diff_for_review_lines output.**
    Do not invent line numbers or comment on files/lines not in that list.
-7. Call post_review_with_inline_comments to post everything
-8. Call save_review to persist the review summary
+8. Call post_review_with_inline_comments to post everything
+9. Call save_review to persist the review summary
 
 **Critical Review Guidelines:**
 
@@ -225,6 +335,12 @@ def review_pr_with_inline(pr_number: int) -> str:
 - Instead of "Good implementation" → "The lock timeout calculation at line X correctly prevents deadlocks"
 - Instead of "Nice test coverage" → "Tests cover the happy path but missing validation for empty input"
 - Instead of "Well done" → Point out actual issues or ask probing questions
+
+**Avoid Over-Engineering:**
+- Don't ask about extremely rare alternatives (trio/curio vs asyncio)
+- Don't worry about edge cases in example/demo code (Jupyter event loops, etc.)
+- Focus on real production risks, not theoretical concerns
+- Example scripts using asyncio.run() don't need event loop management suggestions
 
 **Number of Comments:**
 - Post as many inline comments as there are substantive issues
