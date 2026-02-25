@@ -331,11 +331,26 @@ class GitHubClient:
         Returns:
             Dict with summary of posted comments and success/failure status
         """
+        # Deduplicate comments by (path, line) to prevent posting the same comment twice
+        seen = set()
+        deduplicated_comments = []
+        duplicates_removed = 0
+
+        for comment in inline_comments:
+            key = (comment.get("path"), comment.get("line"))
+            if key not in seen:
+                seen.add(key)
+                deduplicated_comments.append(comment)
+            else:
+                duplicates_removed += 1
+
         results = {
             "summary_posted": False,
             "summary_error": None,
             "inline_comments": [],
             "total": len(inline_comments),
+            "deduplicated_total": len(deduplicated_comments),
+            "duplicates_removed": duplicates_removed,
             "successful": 0,
             "failed": 0,
         }
@@ -348,8 +363,8 @@ class GitHubClient:
             results["summary_error"] = str(e)
             # Continue with inline comments even if summary fails
 
-        # Post inline comments one-by-one
-        for comment in inline_comments:
+        # Post inline comments one-by-one (deduplicated)
+        for comment in deduplicated_comments:
             try:
                 path = comment["path"]
                 line = comment["line"]
