@@ -174,48 +174,65 @@ class GitHubClient:
             raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
         return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "event": event}
 
-    def post_inline_comment(self, pr_number: int, path: str, line: int, body: str) -> dict:
+    def post_inline_comment(self, pr_number: int, path: str, line: int, body: str, max_retries: int = 5) -> dict:
         """Post an inline comment on a specific line of a PR file.
 
         Uses GitHub's new API format with `line` and `side` parameters instead of
-        the deprecated `position` parameter.
+        the deprecated `position` parameter. Retries with exponential backoff on failure.
 
         Args:
             pr_number: PR number
             path: File path in the repo
             line: Line number to comment on (in the new/head version of the file)
             body: Comment text
+            max_retries: Maximum number of retry attempts (default: 5)
 
         Returns:
             dict with comment details
         """
+        import time
+
         commit_id = self._get_pr_head_sha(pr_number)
 
-        # Post inline comment using gh api with new format (line + side)
-        # The new API format uses `line` (line number in file) and `side` ("RIGHT" for new version)
-        result = subprocess.run([
-            "gh", "api", f"repos/{REPO}/pulls/{pr_number}/comments",
-            "-X", "POST",
-            "-f", f"body={body}",
-            "-f", f"path={path}",
-            "-F", f"line={line}",
-            "-f", "side=RIGHT",
-            "-f", f"commit_id={commit_id}",
-        ], capture_output=True, text=True)
+        # Retry with exponential backoff
+        for attempt in range(max_retries):
+            # Post inline comment using gh api with new format (line + side)
+            # The new API format uses `line` (line number in file) and `side` ("RIGHT" for new version)
+            result = subprocess.run([
+                "gh", "api", f"repos/{REPO}/pulls/{pr_number}/comments",
+                "-X", "POST",
+                "-f", f"body={body}",
+                "-f", f"path={path}",
+                "-F", f"line={line}",
+                "-f", "side=RIGHT",
+                "-f", f"commit_id={commit_id}",
+            ], capture_output=True, text=True)
 
-        if result.returncode != 0:
-            # Fallback to formatted comment if inline comment fails
+            if result.returncode == 0:
+                return {"posted_via": "gh_api_inline", "pr_number": pr_number, "path": path, "line": line, "attempts": attempt + 1}
+
             error_msg = result.stderr.strip()
-            formatted_body = f"**{path}:{line}**\n\n{body}\n\n---\n*Note: Could not post as inline comment. Error: {error_msg}*"
-            result = subprocess.run(
-                ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
-                capture_output=True, text=True,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
-            return {"posted_via": "gh_cli_fallback", "pr_number": pr_number, "path": path, "line": line, "error": error_msg}
 
-        return {"posted_via": "gh_api_inline", "pr_number": pr_number, "path": path, "line": line}
+            # If it's a validation error (HTTP 422), don't retry - the line is invalid
+            if "422" in error_msg or "Validation Failed" in error_msg:
+                break
+
+            # For other errors, retry with exponential backoff
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # 1s, 2s, 4s, 8s, 16s
+                time.sleep(wait_time)
+                continue
+
+        # All retries failed or validation error - fallback to formatted comment
+        error_msg = result.stderr.strip()
+        formatted_body = f"**{path}:{line}**\n\n{body}\n\n---\n*Note: Could not post as inline comment. Error: {error_msg}*"
+        result = subprocess.run(
+            ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
+        return {"posted_via": "gh_cli_fallback", "pr_number": pr_number, "path": path, "line": line, "error": error_msg, "attempts": max_retries}
 
     def _get_pr_head_sha(self, pr_number: int) -> str:
         """Get the head commit SHA of a PR."""
