@@ -222,17 +222,18 @@ class GitHubClient:
             raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
         return {"posted_via": "gh_cli_comment", "pr_number": pr_number, "event": event}
 
-    def post_inline_comment(self, pr_number: int, path: str, line: int, body: str, max_retries: int = 5) -> dict:
+    def post_inline_comment(self, pr_number: int, path: str, line: int, body: str, position: int | None = None, max_retries: int = 5) -> dict:
         """Post an inline comment on a specific line of a PR file.
 
-        Uses GitHub's new API format with `line` and `side` parameters instead of
-        the deprecated `position` parameter. Retries with exponential backoff on failure.
+        Uses GitHub's API with `position` parameter (position in the diff).
+        If position is not provided, attempts to find it by parsing the diff.
 
         Args:
             pr_number: PR number
             path: File path in the repo
             line: Line number to comment on (in the new/head version of the file)
             body: Comment text
+            position: Position in the diff (optional, will be calculated if not provided)
             max_retries: Maximum number of retry attempts (default: 5)
 
         Returns:
@@ -242,26 +243,42 @@ class GitHubClient:
 
         commit_id = self._get_pr_head_sha(pr_number)
 
+        # If position not provided, try to find it by parsing the diff
+        if position is None:
+            pr = self.fetch_pr(pr_number)
+            review_lines = self.parse_diff_for_review_lines(pr['diff'])
+            matching = [rl for rl in review_lines if rl['path'] == path and rl['line'] == line]
+            if matching:
+                position = matching[0]['position']
+            else:
+                # Line not in diff, fallback to regular comment
+                formatted_body = f"**{path}:{line}**\n\n{body}"
+                result = subprocess.run(
+                    ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", formatted_body],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
+                return {"posted_via": "gh_cli_fallback", "pr_number": pr_number, "path": path, "line": line, "error": "Line not in diff"}
+
         # Retry with exponential backoff
         for attempt in range(max_retries):
-            # Post inline comment using gh api with new format (line + side)
-            # The new API format uses `line` (line number in file) and `side` ("RIGHT" for new version)
+            # Post inline comment using gh api with position parameter
             result = subprocess.run([
                 "gh", "api", f"repos/{REPO}/pulls/{pr_number}/comments",
                 "-X", "POST",
                 "-f", f"body={body}",
                 "-f", f"path={path}",
-                "-F", f"line={line}",
-                "-f", "side=RIGHT",
+                "-F", f"position={position}",
                 "-f", f"commit_id={commit_id}",
             ], capture_output=True, text=True)
 
             if result.returncode == 0:
-                return {"posted_via": "gh_api_inline", "pr_number": pr_number, "path": path, "line": line, "attempts": attempt + 1}
+                return {"posted_via": "gh_api_inline", "pr_number": pr_number, "path": path, "line": line, "position": position, "attempts": attempt + 1}
 
             error_msg = result.stderr.strip()
 
-            # If it's a validation error (HTTP 422), don't retry - the line is invalid
+            # If it's a validation error (HTTP 422), don't retry - the position is invalid
             if "422" in error_msg or "Validation Failed" in error_msg:
                 break
 
@@ -295,6 +312,7 @@ class GitHubClient:
         Returns list of dicts with:
         - path: file path
         - line: line number in the new version
+        - position: position in the diff (for GitHub API)
         - content: actual line content
         - context: surrounding lines for context (3 before/after)
 
@@ -304,6 +322,7 @@ class GitHubClient:
         results = []
         current_file = None
         current_line = 0
+        diff_position = 0  # Track position in diff for GitHub API
         context_buffer = []
 
         for i, line in enumerate(lines):
@@ -314,6 +333,7 @@ class GitHubClient:
                 if len(parts) >= 4:
                     current_file = parts[3][2:]  # Remove "b/" prefix
                 context_buffer = []
+                diff_position = 0  # Reset position for new file
                 continue
 
             # Track line numbers from hunk headers
@@ -323,11 +343,16 @@ class GitHubClient:
                 if match:
                     current_line = int(match.group(1))
                 context_buffer = []
+                diff_position += 1  # Hunk header counts as a position
                 continue
 
             # Skip if we don't have a file context yet
             if current_file is None:
                 continue
+
+            # Increment diff position for all lines in the hunk
+            if not line.startswith("\\"):  # Skip "\ No newline at end of file"
+                diff_position += 1
 
             # Track added lines
             if line.startswith("+") and not line.startswith("+++"):
@@ -346,6 +371,7 @@ class GitHubClient:
                 results.append({
                     "path": current_file,
                     "line": current_line,
+                    "position": diff_position,
                     "content": line[1:],  # Remove + prefix
                     "context": "\n".join(context_before + [line] + context_after),
                 })
