@@ -69,7 +69,7 @@
 
 **vllm-omni Specific Considerations:**
 - Integration with async_chunk execution model
-- Compatibility with distributed execution (TP/PP)
+- Compatibility with distributed execution
 - Impact on memory usage and KV cache
 - Streaming output support
 - Multi-modal feature interactions
@@ -80,22 +80,22 @@
 
 **Critical Focus:**
 - Model-specific correctness validation (outputs match expected behavior)
-- Memory requirements documented and tested
-- Distributed execution support (TP/PP compatibility)
+- Memory/hardware requirements documented and tested
+- Inference latency testd
+- Distributed execution support (TP/PP/EP/DP compatibility)
 - Model configuration handling
 - Integration with existing model registry
 
 **Questions to Ask:**
-- What are the model's unique architectural features?
+- What are the model's unique architectural features? which category it belongs?
 - How does it handle different input modalities?
 - What are the memory requirements for typical use cases?
-- Does it work with quantization?
+- Does it work with quantization/parallelism/disaggregated/cudagraph/streaming output?
 
 **Using Linked Issue Context:**
 - Verify model requirements from issue are met (architecture, capabilities)
 - Check if the issue mentions hardware specs - validate memory/compute requirements
 - Look for expected behavior examples in the issue - verify outputs match
-- If the issue mentions specific model variants, ensure all are supported
 
 **Common Issues:**
 - Missing model-specific tests
@@ -103,10 +103,17 @@
 - Memory requirements not documented
 - Config parsing errors
 - Missing integration with quantization
+- Missing tests
 
 **vllm-omni Specific Considerations:**
 - Multi-modal model support (text, image, audio, video)
-- Reward model integration
+- cuda graph support
+- batch support
+- online/offline support
+- quantization support
+- parallelism support
+- disaggregated encoder/llm/dit support
+- kv/token/hidden states transfer mechanisms
 - Model-specific attention mechanisms
 - Custom tokenizer handling
 - Streaming output for generative models
@@ -372,57 +379,19 @@
 
 ---
 
-## wip
-
-**Critical Focus:**
-- Directional feedback on approach
-- Architectural concerns
-- Early identification of blockers
-- Not ready for merge
-- Clear indication of what's incomplete
-
-**Questions to Ask:**
-- What's the goal of this PR?
-- What's still missing?
-- Are there architectural concerns?
-- What feedback is most valuable?
-
-**Using Linked Issue Context:**
-- Check if approach aligns with issue discussion
-- Look for design decisions in the issue - does the WIP follow them?
-- If the issue mentions alternatives, is this the agreed approach?
-- Verify the WIP is heading in the right direction per issue goals
-
-**Common Issues:**
-- Unclear what's being proposed
-- No indication of what's incomplete
-- Premature implementation details
-- Missing context on goals
-- Not clearly marked as WIP
-
-**vllm-omni Specific Considerations:**
-- Experimental features
-- Architecture explorations
-- Performance experiments
-- New model support prototypes
-- API design proposals
-
----
-
 ## distributed
 
 **Critical Focus:**
-- Correctness in distributed mode (TP/PP)
+- Correctness in distributed mode (TP/PP/EP/DP)
 - Communication overhead measured
 - Memory distribution across devices
 - Fault tolerance and error handling
 - Scalability with number of devices
 
 **Questions to Ask:**
-- Does this work with Tensor Parallelism?
-- Does this work with Pipeline Parallelism?
 - What's the communication overhead?
 - How is memory distributed?
+- Does it work with other features? e.g., offloading, disaggregation...
 
 **Using Linked Issue Context:**
 - Verify distributed requirements from issue are addressed
