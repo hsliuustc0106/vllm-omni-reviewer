@@ -1,55 +1,45 @@
 # Critical Review Guidelines
 
+## Inline-Only Review Approach
+
+**Philosophy:**
+- Inline comments are the review - no summary needed
+- Each comment targets a specific critical issue at a specific line
+- Let the inline comments speak for themselves
+- Maximum 5 comments per review - only the most critical issues
+
 ## Conciseness Requirements
 
 **Word Limits:**
-- Standard review: 150-250 words maximum
-- Inline review summary: 50-100 words maximum
-- Each inline comment: 2-4 sentences maximum
+- Standard review (if needed): 150-250 words maximum
+- Inline comments: 2-4 sentences maximum each
+- Maximum 5 inline comments per PR
 
 **Banned Phrases (generic praise):**
 - "solid", "generally", "looks good", "well done", "nice work", "great job"
 - "comprehensive", "well structured", "good implementation"
 - Any phrase that doesn't reference specific code locations
 
-**Every sentence must:**
-- Add new information
-- Reference specific file:line locations
-- Demand evidence or question assumptions
-- Provide actionable feedback
+**Every inline comment must:**
+- Target a critical blocker or high-impact issue
+- Demand specific action or evidence
+- Be 2-4 sentences maximum
+- Reference the specific line it's commenting on
 
-## Summary Structure
+## Review Priority
 
-### Good Example (Concise & Critical):
-```
-This PR adds FP8 quantization for Wan 2.2 transformer.
+**Focus on Critical Issues Only (Maximum 5 comments):**
+1. **Missing tests** - highest priority
+2. **Unvalidated claims** - demand measurements/evidence
+3. **Security concerns** - input validation, resource exhaustion
+4. **Design flaws** - architectural issues, race conditions
+5. **Breaking changes** - undocumented API changes
 
-**Red Flags:**
-- Missing tests: Yes - no test coverage for quantization
-- Unvalidated claims: Yes - claims "significant memory reduction" without measurements
-- Missing error handling: No
-- Breaking changes: No
-- Security concerns: No
-
-**Pros:**
-- Follows Z-Image pattern (wan.py:150-180)
-- Threads quant_config through 6 classes correctly
-- Backward compatible (defaults to None)
-
-**Cons:**
-- No tests for quantization functionality
-- No memory measurements despite performance claims
-- Missing type annotation (wan.py:73)
-- No documentation for when to use FP8
-
-**Verdict:** Request changes - need tests and measurements.
-```
-(Word count: 142)
-
-### Bad Example (Too Positive):
-```
-This PR adds FP8 quantization support. The implementation follows good patterns and includes CLI support. The code is well-structured and ready to merge.
-```
+**Skip:**
+- Minor style issues
+- Nitpicks
+- Nice-to-haves
+- Issues already covered by linters
 
 ## Test Coverage Examples
 
@@ -134,6 +124,8 @@ The design looks good.
 
 ## Inline Comment Examples
 
+**Philosophy: Each inline comment should be self-contained and actionable. No summary needed.**
+
 **Good (Critical & Concise):**
 ```
 Missing regression test for this bug fix. Add a test that reproduces the original issue and verifies this fix prevents it. Without this, we risk reintroducing the bug.
@@ -152,6 +144,16 @@ Where are the memory measurements? The PR claims "50% reduction" but provides no
 **Bad (Accepts Claims):**
 ```
 The performance optimization looks promising. It would be good to have some benchmarks to validate the improvements.
+```
+
+**Good (Questions Design):**
+```
+Hard-coding 16 steps will break with future model variants. Add config validation to ensure num_ar_steps==16, or make the implementation flexible to handle different step counts.
+```
+
+**Bad (Generic):**
+```
+Consider making this more flexible for future use cases.
 ```
 
 ## Red Flags Checklist (Mandatory)

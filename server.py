@@ -277,7 +277,7 @@ unique architecture and avoid over-engineering comments on example code."""
 
 @mcp.prompt()
 def review_pr_with_inline(pr_number: int) -> str:
-    """Review a PR and post concise summary with inline comments."""
+    """Review a PR with inline comments only (no summary)."""
     return f"""Review PR #{pr_number} with inline comments workflow:
 
 1. Call fetch_pr to get PR metadata and diff
@@ -285,7 +285,7 @@ def review_pr_with_inline(pr_number: int) -> str:
 3. Call fetch_linked_refs to get context from referenced issues/PRs
 4. Call get_pr_type_guidance with the PR title to get type-specific review focus
 5. Call get_knowledge to load project conventions, architecture, and vllm-omni concepts
-6. Analyze the diff critically and generate:
+6. Analyze the diff critically and post ONLY inline comments (no summary):
 
    **IMPORTANT: Read vllm-omni-concepts.md to understand:**
    - Omni vs AsyncOmni (sync vs async_chunk execution)
@@ -309,34 +309,22 @@ def review_pr_with_inline(pr_number: int) -> str:
 
    **IMPORTANT: Inline comments can ONLY be posted on lines returned by parse_diff_for_review_lines.**
    These are lines that were added or modified in the PR. You cannot comment on unchanged lines
-   or lines not in the diff. If you need to mention issues with unchanged code, include them in
-   the summary instead.
+   or lines not in the diff.
 
-   **Summary Structure (ULTRA-BRIEF):**
-   - What this PR does: 1 sentence
-   - Key strengths: 1-2 bullets with file:line (NO generic praise)
-   - Critical issues: 2-3 bullets with file:line (focus on blockers)
-   - Verdict: 1 sentence
-   - TOTAL: 50-100 words maximum (the inline comments are the real review)
-   - BANNED: "solid", "generally", "looks good", "well done", "nice", "great", "comprehensive"
-
-   The summary is just context - the inline comments are where you provide the real critical analysis.
-
-   **Inline Comments (MAXIMUM 5 - THIS IS THE REAL REVIEW):**
+   **Inline Comments (MAXIMUM 5 - NO SUMMARY NEEDED):**
    - Post 0-5 comments ONLY for the MOST CRITICAL issues
    - Prioritize: missing tests > unvalidated claims > security > design flaws > style
    - Each comment MUST be 2-4 sentences maximum
    - Each comment MUST demand specific action or evidence
    - Skip minor issues - only flag blockers and high-impact problems
    - If there are no critical issues, post 0 comments (don't pad)
+   - NO SUMMARY - let the inline comments speak for themselves
 
-   **The inline comments are where you do the critical analysis. The summary is just brief context.**
-
-7. Format inline comments as a list of dicts with keys: path, line, body
+7. For each inline comment, use post_inline_comment with path, line, and body
    **CRITICAL: Only use path and line values from parse_diff_for_review_lines output.**
    Do not invent line numbers or comment on files/lines not in that list.
-8. Call post_review_with_inline_comments to post everything
-9. Call save_review to persist the review summary
+8. Call save_review to persist a brief note about what was reviewed (for future context)
+9. Report how many inline comments were posted
 
 **Critical Review Guidelines:**
 
