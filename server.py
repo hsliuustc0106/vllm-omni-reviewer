@@ -156,11 +156,7 @@ def get_pr_type_guidance(pr_title: str) -> dict:
 
     # Load type-specific guidance from knowledge base
     try:
-        guidance_doc = _kb.load_file("pr-type-guidance.md")
-        # Extract section for this type
-        guidance = _extract_section(guidance_doc, primary_type)
-        if not guidance:
-            guidance = f"Type '{primary_type}' detected but guidance section not found. Use general guidelines."
+        guidance = _kb.load_file(f"pr-types/{primary_type}.md")
     except FileNotFoundError:
         guidance = f"Type '{primary_type}' detected but guidance file not found. Use general guidelines."
 
@@ -213,10 +209,50 @@ Steps:
 3. Call get_pr_type_guidance with the PR title to get type-specific review focus
 4. Call get_knowledge to load project conventions, architecture, and vllm-omni concepts
 5. If any changed files need more surrounding context, use fetch_file
-6. Provide a structured review covering: bugs, logic errors, performance,
-   security, style, and test coverage
+6. Provide a CONCISE, CRITICAL review with this EXACT structure:
+
+   **Summary (2-3 sentences max):**
+   What does this PR do? What's the core change?
+
+   **Red Flags (mandatory checklist):**
+   - Missing tests: [yes/no + specifics]
+   - Unvalidated claims: [yes/no + specifics]
+   - Missing error handling: [yes/no + specifics]
+   - Breaking changes: [yes/no + specifics]
+   - Security concerns: [yes/no + specifics]
+
+   **Pros (2-4 bullets max):**
+   - [Specific strength with file:line reference]
+   - MUST reference actual code locations
+   - NO generic praise - be specific or stay silent
+
+   **Cons (3-8 bullets):**
+   - [Specific issue with file:line reference]
+   - Focus on gaps, missing evidence, unvalidated assumptions
+   - Demand concrete measurements for all performance claims
+   - Question design decisions that lack justification
+
+   **Verdict (1 sentence):**
+   Approve / Request changes / Needs discussion
+
+   TOTAL LENGTH: 150-250 words maximum
+
 7. Call save_review to persist a summary for future context
 8. Ask if I want to post any comments to the PR on GitHub
+
+**CRITICAL CONSTRAINTS:**
+- Summary MUST be 150-250 words maximum
+- Each Pro/Con bullet MUST reference specific file:line locations
+- BANNED PHRASES: "solid", "generally", "looks good", "well done", "nice work", "great job", "comprehensive", "well structured"
+- Every sentence must add new information - no fluff or repetition
+
+**EVIDENCE REQUIREMENTS (mandatory):**
+- Any performance claim → Ask: "Where are the measurements showing X?"
+- Any new feature → Ask: "Where are the tests covering X?"
+- Any bug fix → Ask: "Where is the regression test preventing X?"
+- Any design decision → Ask: "Why this approach vs [specific alternative]?"
+
+Use direct language: "Missing tests for X" not "It would be beneficial to add tests"
 
 IMPORTANT: Read vllm-omni-concepts.md from the knowledge base to understand:
 - Omni vs AsyncOmni (sync vs async_chunk execution)
@@ -276,16 +312,25 @@ def review_pr_with_inline(pr_number: int) -> str:
    or lines not in the diff. If you need to mention issues with unchanged code, include them in
    the summary instead.
 
-   **Summary Structure (required):**
-   - Brief overview of what the PR does
-   - **Pros:** List specific strengths (e.g., good test coverage, clean design, backward compatible)
-   - **Cons:** List concerns and issues (e.g., missing tests, unclear edge cases, performance questions)
-   - Overall assessment
+   **Summary Structure (ULTRA-BRIEF):**
+   - What this PR does: 1 sentence
+   - Key strengths: 1-2 bullets with file:line (NO generic praise)
+   - Critical issues: 2-3 bullets with file:line (focus on blockers)
+   - Verdict: 1 sentence
+   - TOTAL: 50-100 words maximum (the inline comments are the real review)
+   - BANNED: "solid", "generally", "looks good", "well done", "nice", "great", "comprehensive"
 
-   **Inline Comments:**
-   - Post as many comments as needed based on actual issues found (not a fixed number)
-   - Be critical and question assumptions
-   - Focus on substantive issues, not just praise
+   The summary is just context - the inline comments are where you provide the real critical analysis.
+
+   **Inline Comments (MAXIMUM 5 - THIS IS THE REAL REVIEW):**
+   - Post 0-5 comments ONLY for the MOST CRITICAL issues
+   - Prioritize: missing tests > unvalidated claims > security > design flaws > style
+   - Each comment MUST be 2-4 sentences maximum
+   - Each comment MUST demand specific action or evidence
+   - Skip minor issues - only flag blockers and high-impact problems
+   - If there are no critical issues, post 0 comments (don't pad)
+
+   **The inline comments are where you do the critical analysis. The summary is just brief context.**
 
 7. Format inline comments as a list of dicts with keys: path, line, body
    **CRITICAL: Only use path and line values from parse_diff_for_review_lines output.**
@@ -342,11 +387,13 @@ def review_pr_with_inline(pr_number: int) -> str:
 - Focus on real production risks, not theoretical concerns
 - Example scripts using asyncio.run() don't need event loop management suggestions
 
-**Number of Comments:**
-- Post as many inline comments as there are substantive issues
-- A small doc fix might need 0-2 comments
-- A large feature might need 8-12 comments
-- Don't artificially limit or pad the number of comments"""
+**Number of Comments (STRICT LIMIT):**
+- Maximum 5 inline comments per review
+- Only post comments for CRITICAL issues that block merge
+- Prioritize: missing tests, unvalidated performance claims, security risks, major design flaws
+- A small doc fix should have 0 comments
+- A large feature should have 3-5 comments on the most critical gaps
+- Do NOT post comments on minor style issues or nice-to-haves"""
 
 
 # -- Entry point ---------------------------------------------------------

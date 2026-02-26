@@ -1,26 +1,50 @@
 # Critical Review Guidelines
 
+## Conciseness Requirements
+
+**Word Limits:**
+- Standard review: 150-250 words maximum
+- Inline review summary: 50-100 words maximum
+- Each inline comment: 2-4 sentences maximum
+
+**Banned Phrases (generic praise):**
+- "solid", "generally", "looks good", "well done", "nice work", "great job"
+- "comprehensive", "well structured", "good implementation"
+- Any phrase that doesn't reference specific code locations
+
+**Every sentence must:**
+- Add new information
+- Reference specific file:line locations
+- Demand evidence or question assumptions
+- Provide actionable feedback
+
 ## Summary Structure
 
-### Good Example (Pros/Cons):
+### Good Example (Concise & Critical):
 ```
-This PR adds FP8 quantization support for Wan 2.2 transformer.
+This PR adds FP8 quantization for Wan 2.2 transformer.
+
+**Red Flags:**
+- Missing tests: Yes - no test coverage for quantization
+- Unvalidated claims: Yes - claims "significant memory reduction" without measurements
+- Missing error handling: No
+- Breaking changes: No
+- Security concerns: No
 
 **Pros:**
-- Follows established Z-Image pattern consistently
-- Threads quant_config through all 6 transformer classes correctly
-- Includes CLI support with clear help text
-- Backward compatible (quant_config defaults to None)
+- Follows Z-Image pattern (wan.py:150-180)
+- Threads quant_config through 6 classes correctly
+- Backward compatible (defaults to None)
 
 **Cons:**
-- No test coverage for quantization functionality
-- Claims "significant memory reduction" but provides no memory measurements
-- Missing type annotation in create_transformer_from_config
-- No documentation explaining when to use FP8 or expected trade-offs
-- Test results show only latency, not actual memory usage
+- No tests for quantization functionality
+- No memory measurements despite performance claims
+- Missing type annotation (wan.py:73)
+- No documentation for when to use FP8
 
-Overall: Implementation is solid but lacks validation. Need tests and measurements before merge.
+**Verdict:** Request changes - need tests and measurements.
 ```
+(Word count: 142)
 
 ### Bad Example (Too Positive):
 ```
@@ -106,4 +130,65 @@ Storing a live reference to the mutable request object could lead to race condit
 **Bad (Accepting Design):**
 ```
 The design looks good.
+```
+
+## Inline Comment Examples
+
+**Good (Critical & Concise):**
+```
+Missing regression test for this bug fix. Add a test that reproduces the original issue and verifies this fix prevents it. Without this, we risk reintroducing the bug.
+```
+
+**Bad (Too verbose):**
+```
+It would be really beneficial if we could add some test coverage here to ensure that this functionality works as expected and to prevent any potential regressions in the future. This would help maintain code quality and give us confidence in the changes.
+```
+
+**Good (Demands Evidence):**
+```
+Where are the memory measurements? The PR claims "50% reduction" but provides no before/after data. Run benchmarks with realistic workloads and report peak VRAM usage.
+```
+
+**Bad (Accepts Claims):**
+```
+The performance optimization looks promising. It would be good to have some benchmarks to validate the improvements.
+```
+
+## Red Flags Checklist (Mandatory)
+
+Every review MUST explicitly check and report on these:
+
+1. **Missing tests:**
+   - New feature without tests?
+   - Bug fix without regression test?
+   - Changed behavior without test updates?
+
+2. **Unvalidated claims:**
+   - Performance claims without benchmarks?
+   - Memory claims without measurements?
+   - Quality claims without metrics?
+
+3. **Missing error handling:**
+   - No validation of inputs?
+   - No handling of failure cases?
+   - Silent failures or unclear errors?
+
+4. **Breaking changes:**
+   - API changes without documentation?
+   - Behavior changes without migration guide?
+   - Removed features without deprecation?
+
+5. **Security concerns:**
+   - Input validation missing?
+   - Resource exhaustion possible?
+   - Privilege escalation risks?
+
+**Format in review:**
+```
+**Red Flags:**
+- Missing tests: Yes - no coverage for X functionality
+- Unvalidated claims: Yes - claims Y without measurements
+- Missing error handling: No
+- Breaking changes: No
+- Security concerns: No
 ```
