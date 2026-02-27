@@ -156,6 +156,68 @@ Hard-coding 16 steps will break with future model variants. Add config validatio
 Consider making this more flexible for future use cases.
 ```
 
+## Smart Context Fetching
+
+**When to Fetch Additional Context:**
+
+Use context-fetching tools when posting critical inline comments that need more information:
+
+### 1. Import/Dependency Analysis
+
+**Scenario:** New imports that might have performance or compatibility implications
+
+**Tools to use:**
+```
+extract_imports_from_diff(pr_number)
+fetch_symbol_definition("ParallelLinear", search_paths=["vllm/"])
+```
+
+**Example inline comment:**
+```
+This imports ParallelLinear from vllm.model_executor.layers.linear. I checked the definition and it requires tensor parallelism setup. Verify this model supports TP and add error handling if TP is not configured.
+```
+
+### 2. Unclear Code Context
+
+**Scenario:** The 3-line diff context isn't enough to understand the change
+
+**Tools to use:**
+```
+fetch_file_context("vllm/worker/gpu_model_runner.py", line=285, context_lines=30)
+```
+
+**Example inline comment:**
+```
+This modifies the model loading sequence. Looking at the surrounding code (lines 260-310), this breaks the initialization order - KV cache must be allocated before CUDA graphs. Move this after line 295.
+```
+
+### 3. Configuration File Checks
+
+**Scenario:** Code changes that might require config updates
+
+**Tools to use:**
+```
+check_related_config_files(pr_number)
+```
+
+**Example inline comment:**
+```
+Adding a new model requires updating the model registry. I checked and vllm/model_executor/models/__init__.py needs to import and register Qwen3TTS. Add the registration in __init__.py.
+```
+
+## Context Fetching Limits
+
+**Maximum per review:**
+- 3-5 context fetches total
+- 20-50 lines per fetch_file_context call
+- 3 results max from fetch_symbol_definition
+
+**Don't fetch context for:**
+- Minor style issues
+- Obvious problems that don't need verification
+- Issues where the diff provides enough context
+- Nice-to-have improvements
+
 ## Red Flags Checklist (Mandatory)
 
 Every review MUST explicitly check and report on these:

@@ -104,6 +104,67 @@ def parse_diff_for_review_lines(diff: str) -> list[dict]:
     return _gh.parse_diff_for_review_lines(diff)
 
 
+@mcp.tool()
+def extract_imports_from_diff(pr_number: int, file_path: str | None = None) -> dict:
+    """Extract import statements from changed lines in a PR diff.
+
+    Args:
+        pr_number: PR number
+        file_path: Optional - only extract from this specific file
+
+    Returns:
+        Dictionary with imports_by_file containing added/removed imports and module names
+    """
+    pr = _gh.fetch_pr(pr_number)
+    return _gh.extract_imports_from_diff(pr["diff"], file_path)
+
+
+@mcp.tool()
+def fetch_file_context(path: str, line: int, context_lines: int = 20, ref: str = "main") -> dict:
+    """Fetch surrounding context for a specific line in a file (not the whole file).
+
+    Args:
+        path: File path in repo
+        line: Target line number
+        context_lines: Lines before/after to fetch (default: 20, max: 50)
+        ref: Git ref (default: "main")
+
+    Returns:
+        Dictionary with path, line, start_line, end_line, content, total_file_lines
+    """
+    return _gh.fetch_file_context(path, line, context_lines, ref)
+
+
+@mcp.tool()
+def fetch_symbol_definition(symbol_name: str, search_paths: list[str] | None = None, ref: str = "main") -> dict:
+    """Search for a symbol (function/class) definition in the codebase.
+
+    Args:
+        symbol_name: Function/class name to find
+        search_paths: Optional list of paths to search (e.g., ["vllm/"])
+        ref: Git ref (default: "main")
+
+    Returns:
+        Dictionary with symbol, found (bool), locations (list of path/line/context)
+    """
+    return _gh.fetch_symbol_definition(symbol_name, search_paths, ref)
+
+
+@mcp.tool()
+def check_related_config_files(pr_number: int) -> dict:
+    """Identify configuration files that might be affected by PR changes.
+
+    Args:
+        pr_number: PR number
+
+    Returns:
+        Dictionary with relevant_configs (list of path/reason/exists)
+    """
+    pr = _gh.fetch_pr(pr_number)
+    changed_files = [f["filename"] for f in pr.get("files", [])]
+    return _gh.check_related_config_files(changed_files)
+
+
 def _extract_section(markdown: str, heading: str) -> str:
     """Extract content under a specific heading from markdown."""
     lines = markdown.split("\n")
@@ -307,11 +368,35 @@ def review_pr_with_inline(pr_number: int) -> str:
    - For other types: Follow the specific guidance provided
    - Use issue context to validate PR scope and completeness
 
+   **Smart Context Fetching (Use When Posting Critical Inline Comments):**
+
+   When you identify a critical issue and plan to post an inline comment, use these tools to gather context:
+
+   1. **Import/dependency concerns:**
+      - Call extract_imports_from_diff(pr_number) to see what's being imported
+      - For critical imports, call fetch_symbol_definition to understand what's being used
+      - Check if imported modules are in changed files
+
+   2. **Unclear code context:**
+      - Call fetch_file_context(path, line, context_lines=30) to see surrounding code
+      - Use this when the 3-line diff context isn't enough to understand the change
+      - Limit to 30-50 lines to avoid context explosion
+
+   3. **Configuration concerns:**
+      - Call check_related_config_files(pr_number) to identify relevant configs
+      - Check if config files need updates based on code changes
+
+   **IMPORTANT CONSTRAINTS:**
+   - Only fetch context when posting a critical inline comment (not for every change)
+   - Limit context fetches to 3-5 per review to avoid explosion
+   - Prefer targeted fetches (line ranges, specific files) over full file fetches
+   - If context isn't critical for the comment, skip fetching
+
    **IMPORTANT: Inline comments can ONLY be posted on lines returned by parse_diff_for_review_lines.**
    These are lines that were added or modified in the PR. You cannot comment on unchanged lines
    or lines not in the diff.
 
-   **Inline Comments (MAXIMUM 5 - NO SUMMARY NEEDED):**
+   **Inline Comments (MAXIMUM 5 - WITH SMART CONTEXT):**
    - Post 0-5 comments ONLY for the MOST CRITICAL issues
    - Prioritize: missing tests > unvalidated claims > security > design flaws > style
    - Each comment MUST be 2-4 sentences maximum
@@ -319,6 +404,16 @@ def review_pr_with_inline(pr_number: int) -> str:
    - Skip minor issues - only flag blockers and high-impact problems
    - If there are no critical issues, post 0 comments (don't pad)
    - NO SUMMARY - let the inline comments speak for themselves
+
+   **When to Fetch Context:**
+   - Import changes → Use extract_imports_from_diff to analyze
+   - Unclear code → Use fetch_file_context for surrounding code
+   - Config concerns → Use check_related_config_files
+
+   **Context Limits:**
+   - Maximum 3-5 context fetches per review
+   - Prefer line ranges (20-50 lines) over full files
+   - Only fetch when critical for the inline comment
 
 7. For each inline comment, use post_inline_comment with path, line, and body
    **CRITICAL: Only use path and line values from parse_diff_for_review_lines output.**

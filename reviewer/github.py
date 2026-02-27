@@ -463,6 +463,254 @@ class GitHubClient:
 
         return results
 
+    # -- Smart Context Fetching ------------------------------------------
+
+    def extract_imports_from_diff(self, diff: str, file_path: str | None = None) -> dict:
+        """Extract import statements from changed lines in a diff.
+
+        Returns:
+            {
+                "imports_by_file": {
+                    "path/to/file.py": {
+                        "added_imports": ["from x import y", "import z"],
+                        "removed_imports": ["import old"],
+                        "modules": ["x", "z"]
+                    }
+                }
+            }
+        """
+        imports_by_file = {}
+        lines = diff.split("\n")
+        current_file = None
+
+        for line in lines:
+            # Track current file
+            if line.startswith("diff --git"):
+                parts = line.split()
+                if len(parts) >= 4:
+                    current_file = parts[3][2:]  # Remove "b/" prefix
+                    if file_path and current_file != file_path:
+                        current_file = None
+                        continue
+                    imports_by_file[current_file] = {
+                        "added_imports": [],
+                        "removed_imports": [],
+                        "modules": []
+                    }
+
+            if not current_file:
+                continue
+
+            # Extract imports from added lines
+            if line.startswith("+") and not line.startswith("+++"):
+                content = line[1:].strip()
+                if re.match(r'^(from\s+[\w.]+\s+import|import\s+[\w.,\s]+)', content):
+                    imports_by_file[current_file]["added_imports"].append(content)
+                    # Extract module name
+                    if content.startswith("from "):
+                        match = re.match(r'from\s+([\w.]+)', content)
+                        if match:
+                            imports_by_file[current_file]["modules"].append(match.group(1))
+                    elif content.startswith("import "):
+                        match = re.match(r'import\s+([\w.]+)', content)
+                        if match:
+                            imports_by_file[current_file]["modules"].append(match.group(1))
+
+            # Extract imports from removed lines
+            elif line.startswith("-") and not line.startswith("---"):
+                content = line[1:].strip()
+                if re.match(r'^(from\s+[\w.]+\s+import|import\s+[\w.,\s]+)', content):
+                    imports_by_file[current_file]["removed_imports"].append(content)
+
+        # Remove files with no imports
+        imports_by_file = {k: v for k, v in imports_by_file.items() if v["added_imports"] or v["removed_imports"]}
+
+        # Limit to first 50 imports to avoid explosion
+        for file_data in imports_by_file.values():
+            file_data["added_imports"] = file_data["added_imports"][:50]
+            file_data["modules"] = list(set(file_data["modules"]))[:20]
+
+        return {"imports_by_file": imports_by_file}
+
+    def fetch_file_context(
+        self,
+        path: str,
+        line: int,
+        context_lines: int = 20,
+        ref: str = "main"
+    ) -> dict:
+        """Fetch surrounding context for a specific line in a file.
+
+        Args:
+            path: File path in repo
+            line: Target line number
+            context_lines: Lines before/after to fetch (default: 20, max: 50)
+            ref: Git ref (default: "main")
+
+        Returns:
+            {
+                "path": str,
+                "line": int,
+                "start_line": int,
+                "end_line": int,
+                "content": str,
+                "total_file_lines": int
+            }
+        """
+        # Cap context_lines at 50
+        context_lines = min(context_lines, 50)
+
+        # Fetch full file
+        content = self.fetch_file(path, ref)
+        lines = content.split("\n")
+        total_lines = len(lines)
+
+        # Calculate range
+        start_line = max(1, line - context_lines)
+        end_line = min(total_lines, line + context_lines)
+
+        # Extract context (1-indexed)
+        context_content = "\n".join(lines[start_line-1:end_line])
+
+        return {
+            "path": path,
+            "line": line,
+            "start_line": start_line,
+            "end_line": end_line,
+            "content": context_content,
+            "total_file_lines": total_lines
+        }
+
+    def fetch_symbol_definition(
+        self,
+        symbol_name: str,
+        search_paths: list[str] | None = None,
+        ref: str = "main"
+    ) -> dict:
+        """Search for a symbol definition in the codebase.
+
+        Args:
+            symbol_name: Function/class name to find
+            search_paths: Optional list of paths to search
+            ref: Git ref (default: "main")
+
+        Returns:
+            {
+                "symbol": str,
+                "found": bool,
+                "locations": [
+                    {"path": str, "line": int, "context": str}
+                ]
+            }
+        """
+        # Use GitHub Code Search API
+        query = f"{symbol_name} repo:{REPO}"
+        if search_paths:
+            query += f" path:{search_paths[0]}"
+
+        try:
+            resp = self._http.get(
+                "https://api.github.com/search/code",
+                params={"q": query, "per_page": 3}
+            )
+            resp.raise_for_status()
+            results = resp.json()
+
+            locations = []
+            for item in results.get("items", [])[:3]:
+                # Fetch file content to find exact line
+                try:
+                    content = self.fetch_file(item["path"], ref)
+                    lines = content.split("\n")
+
+                    # Search for definition
+                    for i, line in enumerate(lines, 1):
+                        if f"def {symbol_name}" in line or f"class {symbol_name}" in line:
+                            # Get 10-line context
+                            start = max(0, i-5)
+                            end = min(len(lines), i+5)
+                            context = "\n".join(lines[start:end])
+
+                            locations.append({
+                                "path": item["path"],
+                                "line": i,
+                                "context": context
+                            })
+                            break
+                except:
+                    continue
+
+            return {
+                "symbol": symbol_name,
+                "found": len(locations) > 0,
+                "locations": locations
+            }
+        except:
+            return {
+                "symbol": symbol_name,
+                "found": False,
+                "locations": []
+            }
+
+    def check_related_config_files(self, changed_files: list[str]) -> dict:
+        """Identify configuration files that might be affected by code changes.
+
+        Args:
+            changed_files: List of changed file paths from PR
+
+        Returns:
+            {
+                "relevant_configs": [
+                    {"path": str, "reason": str, "exists": bool}
+                ]
+            }
+        """
+        relevant_configs = []
+
+        # Check for Python dependency changes
+        if any("requirements" in f or "setup.py" in f or "pyproject.toml" in f for f in changed_files):
+            relevant_configs.append({
+                "path": "pyproject.toml",
+                "reason": "Python dependencies changed",
+                "exists": True
+            })
+
+        # Check for model changes
+        if any("models/" in f for f in changed_files):
+            relevant_configs.append({
+                "path": "vllm/model_executor/models/__init__.py",
+                "reason": "Model registry might need updates",
+                "exists": True
+            })
+
+        # Check for config file changes
+        if any("config" in f.lower() for f in changed_files):
+            for f in changed_files:
+                if "config" in f.lower() and f.endswith((".yaml", ".yml", ".json", ".toml")):
+                    relevant_configs.append({
+                        "path": f,
+                        "reason": "Configuration file modified",
+                        "exists": True
+                    })
+
+        # Check for CI/build changes
+        if any(".github/" in f or "Dockerfile" in f or "Makefile" in f for f in changed_files):
+            relevant_configs.append({
+                "path": ".github/workflows/",
+                "reason": "CI/build configuration changed",
+                "exists": True
+            })
+
+        # Verify existence
+        for config in relevant_configs:
+            try:
+                self._http.head(f"{BASE}/contents/{config['path']}")
+                config["exists"] = True
+            except:
+                config["exists"] = False
+
+        return {"relevant_configs": relevant_configs}
+
     # -- Helpers ---------------------------------------------------------
 
     def _get(self, path: str, params: dict | None = None) -> dict | list:
