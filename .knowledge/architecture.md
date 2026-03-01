@@ -105,24 +105,24 @@ Stages are configured via YAML files:
 stages:
   - name: thinker
     type: llm
-    model: Qwen/Qwen2.5-Omni-7B
   - name: talker
     type: llm
-    model: Qwen/Qwen2.5-Omni-7B
   - name: code2wav
     type: audio
-    model: Qwen/Code2Wav
 ```
 
 ---
 
 ## Supported Models
 
-### LLM Models (OmniLLM)
+### Omni modality Models
 - Qwen3-Omni
 - Qwen2.5-Omni
+- Qwen3-TTS
+- MiMo-Audio
+- Bagel
 
-### Diffusion Models (OmniDiffusion)
+### Diffusion Models
 - Z-Image
 - Qwen-Image
 - Wan2.2 (video)
