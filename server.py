@@ -335,6 +335,10 @@ def review_pr_with_inline(pr_number: int) -> str:
 
 **Critical Review Guidelines:**
 
+**MOST COMMON ISSUES (check first):**
+- New API endpoint without test → BLOCK
+- New model implementation without test → BLOCK
+
 **Test Coverage (HIGH PRIORITY):**
 - Does the PR include tests for new functionality?
 - Are edge cases tested?
