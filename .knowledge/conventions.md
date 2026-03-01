@@ -20,39 +20,47 @@
 - `breaking-change` — backwards-incompatible changes
 - `WIP` — work in progress, not ready for review
 
-## Review Focus Areas
-- Correctness of the implementation
-- Performance implications (especially for inference hot paths)
-- API compatibility and backwards compatibility
-- Test coverage for new code paths
-- Documentation for user-facing changes
+## Common Pitfalls
 
-## Critical Review Mindset
+### Mixin + nn.Module MRO Issue
 
-When reviewing PRs, adopt a skeptical but constructive mindset:
+When a mixin class is listed **after** `nn.Module` in the inheritance order, the mixin's `__init__` will **not** be called because `nn.Module.__init__()` doesn't call `super().__init__()`.
 
-### Question Everything:
-- **Test coverage**: "How do we know this works?"
-- **Performance claims**: "Where are the measurements?"
-- **Design decisions**: "Why this way vs alternatives?"
-- **Edge cases**: "What happens when X fails?"
-- **Breaking changes**: "Is this documented?"
+**Problem:**
+```python
+class MyModel(nn.Module, SomeMixin):  # Mixin after nn.Module
+    def __init__(self):
+        super().__init__()  # Only calls nn.Module.__init__!
+        self.mixin_method()  # CRASH: mixin attributes not initialized
+```
 
-### Provide Balanced Feedback:
-- List both pros and cons explicitly
-- Acknowledge good practices while identifying gaps
-- Be specific about what needs improvement
-- Suggest concrete next steps
+**Solution - Lazy Initialization:**
+```python
+class SomeMixin:
+    @property
+    def _internal_state(self) -> set:
+        if not hasattr(self, '_internal_state_storage'):
+            self._internal_state_storage = set()
+        return self._internal_state_storage
+```
 
-### Focus on Substance:
-- Avoid generic praise ("looks good", "nice work")
-- Point to specific lines and explain why they matter
-- Ask probing questions that reveal gaps
-- Demand evidence for claims (benchmarks, tests, measurements)
+**Red Flag in Tests:** If test mocks inherit only from the mixin (not `nn.Module`), they won't catch this bug.
 
-### Appropriate Rigor by PR Type:
+## Review Checklist
+
+### Red Flags (Must Check)
+- [ ] **Missing tests**: New feature/bugfix without test coverage?
+- [ ] **Unvalidated claims**: Performance claims without benchmarks?
+- [ ] **MRO issues**: Mixins after nn.Module with `__init__` that sets attributes?
+- [ ] **Breaking changes**: API changes without documentation?
+
+### By PR Type
 - **Bug fixes**: Regression test? Root cause understood?
-- **New features**: Test coverage? Documentation? Breaking changes?
-- **Performance**: Measurements? Quality trade-offs? Realistic workload?
+- **New features**: Test coverage? Documentation?
 - **Refactoring**: Behavior preserved? Tests still pass?
-- **Documentation**: Accurate? Complete? Examples work?
+- **Performance**: Measurements? Quality trade-offs?
+- **Model code**: Correctness validated? Memory requirements documented?
+
+## Known Dependencies
+- `diffusers` - already in common.txt
+- `einops` - inherited from vLLM, do NOT flag as missing

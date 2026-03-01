@@ -264,6 +264,29 @@ def review_pr(pr_number: int) -> str:
     """Review a vllm-omni PR with full context."""
     return f"""Review PR #{pr_number} from vllm-project/vllm-omni.
 
+**CRITICAL CONSTRAINTS:**
+- Summary MUST be 150-250 words maximum
+- Each Pro/Con bullet MUST reference specific file:line locations
+- BANNED PHRASES: "solid", "generally", "looks good", "well done", "nice work", "great job", "comprehensive", "well structured"
+- Every sentence must add new information - no fluff or repetition
+
+**EVIDENCE REQUIREMENTS (mandatory):**
+- Any performance claim → Ask: "Where are the measurements showing X?"
+- Any new feature → Ask: "Where are the tests covering X?"
+- Any bug fix → Ask: "Where is the regression test preventing X?"
+- Any design decision → Ask: "Why this approach vs [specific alternative]?"
+
+Use direct language: "Missing tests for X" not "It would be beneficial to add tests"
+
+**Type-Specific Review Focus:**
+- Apply the guidance from get_pr_type_guidance to prioritize review areas
+- Use linked issue context to validate the PR addresses the problem correctly
+- For [Bugfix]: Check if issue describes reproduction steps, verify tests cover them
+- For [Feat]: Check if issue describes requirements, verify implementation matches
+- For [Quantization]: Check if issue mentions target metrics, verify measurements provided
+- Combine type-specific focus with general vllm-omni architecture knowledge
+- If no type detected, use general review guidelines
+
 Steps:
 1. Call fetch_pr to get the PR diff, metadata, and discussion
 2. Call fetch_linked_refs to get context from referenced issues/PRs
@@ -301,37 +324,6 @@ Steps:
 7. Call save_review to persist a summary for future context
 8. Ask if I want to post any comments to the PR on GitHub
 
-**CRITICAL CONSTRAINTS:**
-- Summary MUST be 150-250 words maximum
-- Each Pro/Con bullet MUST reference specific file:line locations
-- BANNED PHRASES: "solid", "generally", "looks good", "well done", "nice work", "great job", "comprehensive", "well structured"
-- Every sentence must add new information - no fluff or repetition
-
-**EVIDENCE REQUIREMENTS (mandatory):**
-- Any performance claim → Ask: "Where are the measurements showing X?"
-- Any new feature → Ask: "Where are the tests covering X?"
-- Any bug fix → Ask: "Where is the regression test preventing X?"
-- Any design decision → Ask: "Why this approach vs [specific alternative]?"
-
-Use direct language: "Missing tests for X" not "It would be beneficial to add tests"
-
-IMPORTANT: Read vllm-omni-concepts.md from the knowledge base to understand:
-- Omni vs AsyncOmni (sync vs async_chunk execution)
-- Multi-stage pipeline architecture and stage-level concurrency
-- OmniChunkTransferAdapter and SharedMemoryConnector
-- Shared infrastructure between online serving and offline inference
-- Memory management patterns and risks
-- Example code vs production code expectations
-
-**Type-Specific Review Focus:**
-- Apply the guidance from get_pr_type_guidance to prioritize review areas
-- Use linked issue context to validate the PR addresses the problem correctly
-- For [Bugfix]: Check if issue describes reproduction steps, verify tests cover them
-- For [Feat]: Check if issue describes requirements, verify implementation matches
-- For [Quantization]: Check if issue mentions target metrics, verify measurements provided
-- Combine type-specific focus with general vllm-omni architecture knowledge
-- If no type detected, use general review guidelines
-
 Use this knowledge to provide context-aware reviews that understand vllm-omni's
 unique architecture and avoid over-engineering comments on example code."""
 
@@ -340,6 +332,63 @@ unique architecture and avoid over-engineering comments on example code."""
 def review_pr_with_inline(pr_number: int) -> str:
     """Review a PR with inline comments only (no summary)."""
     return f"""Review PR #{pr_number} with inline comments workflow:
+
+**Critical Review Guidelines:**
+
+**Test Coverage (HIGH PRIORITY):**
+- Does the PR include tests for new functionality?
+- Are edge cases tested?
+- For bug fixes: Is there a regression test?
+- For performance claims: Are there benchmarks with before/after data?
+- For new features: Are error paths tested?
+- Question: "What happens if X fails?" "How is Y validated?"
+
+**Performance Claims:**
+- If PR claims performance improvement, demand measurements
+- Look for: memory usage data, latency numbers, throughput comparisons
+- Question vague claims like "significant improvement" without data
+- Check if benchmarks are realistic (not toy examples)
+
+**Design & Architecture:**
+- Does this fit the existing architecture?
+- Are there simpler alternatives?
+- Is this over-engineered or under-engineered?
+- Question: "Why this approach vs X?" "What's the trade-off?"
+
+**Correctness & Edge Cases:**
+- What edge cases are not handled?
+- Are error messages helpful?
+- Is input validation sufficient?
+- Are there race conditions or concurrency issues?
+
+**Documentation & Type Safety:**
+- Are type annotations complete and correct?
+- Is user-facing documentation updated?
+- Are breaking changes documented?
+
+**Code Quality:**
+- Are there code smells (duplication, complexity, unclear naming)?
+- Does it follow project conventions?
+- Are there security concerns?
+
+**Be Specific:**
+- Instead of "Good implementation" → "The lock timeout calculation at line X correctly prevents deadlocks"
+- Instead of "Nice test coverage" → "Tests cover the happy path but missing validation for empty input"
+- Instead of "Well done" → Point out actual issues or ask probing questions
+
+**Avoid Over-Engineering:**
+- Don't ask about extremely rare alternatives (trio/curio vs asyncio)
+- Don't worry about edge cases in example/demo code (Jupyter event loops, etc.)
+- Focus on real production risks, not theoretical concerns
+- Example scripts using asyncio.run() don't need event loop management suggestions
+
+**Number of Comments (STRICT LIMIT):**
+- Maximum 5 inline comments per review
+- Only post comments for CRITICAL issues that block merge
+- Prioritize: missing tests, unvalidated performance claims, security risks, major design flaws
+- A small doc fix should have 0 comments
+- A large feature should have 3-5 comments on the most critical gaps
+- Do NOT post comments on minor style issues or nice-to-haves
 
 1. Call fetch_pr to get PR metadata and diff
 2. Call parse_diff_for_review_lines to identify lines needing comments
@@ -420,63 +469,7 @@ def review_pr_with_inline(pr_number: int) -> str:
    Do not invent line numbers or comment on files/lines not in that list.
 8. Call save_review to persist a brief note about what was reviewed (for future context)
 9. Report how many inline comments were posted
-
-**Critical Review Guidelines:**
-
-**Test Coverage (HIGH PRIORITY):**
-- Does the PR include tests for new functionality?
-- Are edge cases tested?
-- For bug fixes: Is there a regression test?
-- For performance claims: Are there benchmarks with before/after data?
-- For new features: Are error paths tested?
-- Question: "What happens if X fails?" "How is Y validated?"
-
-**Performance Claims:**
-- If PR claims performance improvement, demand measurements
-- Look for: memory usage data, latency numbers, throughput comparisons
-- Question vague claims like "significant improvement" without data
-- Check if benchmarks are realistic (not toy examples)
-
-**Design & Architecture:**
-- Does this fit the existing architecture?
-- Are there simpler alternatives?
-- Is this over-engineered or under-engineered?
-- Question: "Why this approach vs X?" "What's the trade-off?"
-
-**Correctness & Edge Cases:**
-- What edge cases are not handled?
-- Are error messages helpful?
-- Is input validation sufficient?
-- Are there race conditions or concurrency issues?
-
-**Documentation & Type Safety:**
-- Are type annotations complete and correct?
-- Is user-facing documentation updated?
-- Are breaking changes documented?
-
-**Code Quality:**
-- Are there code smells (duplication, complexity, unclear naming)?
-- Does it follow project conventions?
-- Are there security concerns?
-
-**Be Specific:**
-- Instead of "Good implementation" → "The lock timeout calculation at line X correctly prevents deadlocks"
-- Instead of "Nice test coverage" → "Tests cover the happy path but missing validation for empty input"
-- Instead of "Well done" → Point out actual issues or ask probing questions
-
-**Avoid Over-Engineering:**
-- Don't ask about extremely rare alternatives (trio/curio vs asyncio)
-- Don't worry about edge cases in example/demo code (Jupyter event loops, etc.)
-- Focus on real production risks, not theoretical concerns
-- Example scripts using asyncio.run() don't need event loop management suggestions
-
-**Number of Comments (STRICT LIMIT):**
-- Maximum 5 inline comments per review
-- Only post comments for CRITICAL issues that block merge
-- Prioritize: missing tests, unvalidated performance claims, security risks, major design flaws
-- A small doc fix should have 0 comments
-- A large feature should have 3-5 comments on the most critical gaps
-- Do NOT post comments on minor style issues or nice-to-haves"""
+"""
 
 
 # -- Entry point ---------------------------------------------------------
