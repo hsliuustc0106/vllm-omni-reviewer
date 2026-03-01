@@ -40,9 +40,15 @@ def fetch_file(path: str, ref: str = "main") -> str:
 
 
 @mcp.tool()
-def list_recent_prs(state: str = "open", limit: int = 10) -> list[dict]:
-    """List recent PRs for browsing."""
-    return _gh.list_recent_prs(state, limit)
+def list_recent_prs(state: str = "open", limit: int = 10, sort: str = "updated") -> list[dict]:
+    """List recent PRs for browsing.
+
+    Args:
+        state: PR state filter - "open", "closed", or "all"
+        limit: Maximum number of PRs to return (default: 10)
+        sort: Sort order - "updated" (last activity) or "created" (newest submissions)
+    """
+    return _gh.list_recent_prs(state, limit, sort)
 
 
 @mcp.tool()

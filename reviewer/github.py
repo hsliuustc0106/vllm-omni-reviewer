@@ -193,15 +193,22 @@ class GitHubClient:
 
     # -- List PRs --------------------------------------------------------
 
-    def list_recent_prs(self, state: str = "open", limit: int = 10) -> list[dict]:
-        """List recent PRs."""
-        prs = self._get(f"/pulls", params={"state": state, "per_page": limit, "sort": "updated"})
+    def list_recent_prs(self, state: str = "open", limit: int = 10, sort: str = "updated") -> list[dict]:
+        """List recent PRs.
+
+        Args:
+            state: PR state filter (open, closed, all)
+            limit: Maximum number of PRs to return
+            sort: Sort field - "updated" (last activity) or "created" (newest first)
+        """
+        prs = self._get(f"/pulls", params={"state": state, "per_page": limit, "sort": sort})
         return [
             {
                 "number": p["number"],
                 "title": p["title"],
                 "user": p["user"]["login"],
                 "state": p["state"],
+                "created_at": p.get("created_at"),
                 "updated_at": p["updated_at"],
                 "labels": [l["name"] for l in p.get("labels", [])],
             }
