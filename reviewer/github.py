@@ -1,18 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""GitHub API client for vllm-project/vllm-omni."""
+"""GitHub API client for vllm-project/vllm-omni using gh CLI."""
 
 from __future__ import annotations
 
-import os
+import json
 import re
 import subprocess
 
-import httpx
-
 REPO = "vllm-project/vllm-omni"
-BASE = f"https://api.github.com/repos/{REPO}"
 DIFF_CHAR_LIMIT = 200_000
 
 # Patterns for linked refs in PR bodies
@@ -35,6 +32,25 @@ _PR_TYPE_PATTERNS = [
     (re.compile(r"\[(?:Refactor|Chore|Misc)\]", re.IGNORECASE), "refactor"),
     (re.compile(r"\[(?:WIP|DO NOT MERGE THIS)\]", re.IGNORECASE), "wip"),
 ]
+
+
+def _run_gh_api(endpoint: str, *args: str, paginate: bool = False) -> dict | list:
+    """Run gh api command and return parsed JSON result."""
+    cmd = ["gh", "api", endpoint] + list(args)
+    if paginate:
+        cmd.append("--paginate")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh api failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+def _run_gh(*args: str) -> str:
+    """Run gh command and return stdout."""
+    result = subprocess.run(["gh"] + list(args), capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh command failed: {result.stderr.strip()}")
+    return result.stdout
 
 
 def extract_pr_type(title: str) -> str | None:
@@ -71,36 +87,29 @@ def detect_pr_types(title: str) -> list[tuple[str, str]]:
 
 
 class GitHubClient:
-    def __init__(self, token: str | None = None):
-        if token is None:
-            # First try to get token from gh CLI
-            result = subprocess.run(
-                ["gh", "auth", "token"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                token = result.stdout.strip()
-            else:
-                # Fall back to environment variable
-                token = os.environ.get("GITHUB_TOKEN", "")
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        self._http = httpx.Client(headers=headers, timeout=30)
+    """GitHub API client using gh CLI for authentication."""
 
     # -- PR metadata + diff + comments -----------------------------------
 
     def fetch_pr(self, number: int) -> dict:
         """Fetch PR metadata, diff, comments, and reviews."""
-        pr = self._get(f"/pulls/{number}")
-        diff = self.fetch_diff(number)
-        comments = self._get(f"/issues/{number}/comments")
-        review_comments = self._get(f"/pulls/{number}/comments")
-        reviews = self._get(f"/pulls/{number}/reviews")
-        files = self._get(f"/pulls/{number}/files")
+        # Get PR metadata
+        pr = _run_gh_api(f"repos/{REPO}/pulls/{number}")
+
+        # Get diff using gh pr view
+        try:
+            diff = _run_gh("pr", "view", str(number), "--repo", REPO, "--json", "diff", "--jq", ".diff")
+        except RuntimeError:
+            diff = ""
+
+        if len(diff) > DIFF_CHAR_LIMIT:
+            diff = diff[:DIFF_CHAR_LIMIT] + f"\n\n... diff truncated at {DIFF_CHAR_LIMIT} chars ..."
+
+        # Get comments, reviews, and files
+        comments = _run_gh_api(f"repos/{REPO}/issues/{number}/comments")
+        review_comments = _run_gh_api(f"repos/{REPO}/pulls/{number}/comments")
+        reviews = _run_gh_api(f"repos/{REPO}/pulls/{number}/reviews")
+        files = _run_gh_api(f"repos/{REPO}/pulls/{number}/files")
 
         changed_files = [f["filename"] for f in files] if isinstance(files, list) else []
 
@@ -140,13 +149,13 @@ class GitHubClient:
 
     def fetch_diff(self, number: int) -> str:
         """Fetch raw unified diff for a PR."""
-        url = f"{BASE}/pulls/{number}"
-        resp = self._http.get(url, headers={"Accept": "application/vnd.github.diff"})
-        resp.raise_for_status()
-        text = resp.text
-        if len(text) > DIFF_CHAR_LIMIT:
-            text = text[:DIFF_CHAR_LIMIT] + f"\n\n... diff truncated at {DIFF_CHAR_LIMIT} chars ..."
-        return text
+        try:
+            diff = _run_gh("pr", "view", str(number), "--repo", REPO, "--json", "diff", "--jq", ".diff")
+        except RuntimeError:
+            diff = ""
+        if len(diff) > DIFF_CHAR_LIMIT:
+            diff = diff[:DIFF_CHAR_LIMIT] + f"\n\n... diff truncated at {DIFF_CHAR_LIMIT} chars ..."
+        return diff
 
     # -- Linked references -----------------------------------------------
 
@@ -162,14 +171,14 @@ class GitHubClient:
         results = []
         for num in sorted(numbers):
             try:
-                # Try as PR first, fall back to issue
-                data = self._get(f"/pulls/{num}")
+                # Try as PR first
+                data = _run_gh_api(f"repos/{REPO}/pulls/{num}")
                 kind = "pull"
-            except httpx.HTTPStatusError:
+            except RuntimeError:
                 try:
-                    data = self._get(f"/issues/{num}")
+                    data = _run_gh_api(f"repos/{REPO}/issues/{num}")
                     kind = "issue"
-                except httpx.HTTPStatusError:
+                except RuntimeError:
                     continue
             results.append({
                 "number": num,
@@ -185,11 +194,14 @@ class GitHubClient:
 
     def fetch_file(self, path: str, ref: str = "main") -> str:
         """Fetch a file's contents from the repo at a given ref."""
-        url = f"{BASE}/contents/{path}"
-        resp = self._http.get(url, params={"ref": ref},
-                              headers={"Accept": "application/vnd.github.raw+json"})
-        resp.raise_for_status()
-        return resp.text
+        result = subprocess.run(
+            ["gh", "api", f"repos/{REPO}/contents/{path}?ref={ref}",
+             "-H", "Accept: application/vnd.github.raw+json"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to fetch file: {result.stderr.strip()}")
+        return result.stdout
 
     # -- List PRs --------------------------------------------------------
 
@@ -201,7 +213,7 @@ class GitHubClient:
             limit: Maximum number of PRs to return
             sort: Sort field - "updated" (last activity) or "created" (newest first)
         """
-        prs = self._get(f"/pulls", params={"state": state, "per_page": limit, "sort": sort})
+        prs = _run_gh_api(f"repos/{REPO}/pulls", "-F", f"state={state}", "-F", f"per_page={limit}", "-F", f"sort={sort}")
         return [
             {
                 "number": p["number"],
@@ -218,9 +230,8 @@ class GitHubClient:
     # -- Post review -----------------------------------------------------
 
     def post_review_comment(self, pr_number: int, body: str, event: str = "COMMENT") -> dict:
-        """Post a comment on a PR via ``gh`` CLI REST API (not GraphQL).
-        event: APPROVE, REQUEST_CHANGES, or COMMENT.
-        Note: Uses regular comment endpoint instead of review endpoint to avoid GraphQL scope requirements."""
+        """Post a comment on a PR via ``gh`` CLI.
+        event: APPROVE, REQUEST_CHANGES, or COMMENT."""
         result = subprocess.run(
             ["gh", "pr", "comment", str(pr_number), "--repo", REPO, "--body", body],
             capture_output=True, text=True,
@@ -232,15 +243,14 @@ class GitHubClient:
     def post_inline_comment(self, pr_number: int, path: str, line: int, body: str, position: int | None = None, max_retries: int = 5) -> dict:
         """Post an inline comment on a specific line of a PR file.
 
-        Uses GitHub's API with `position` parameter (position in the diff).
-        If position is not provided, attempts to find it by parsing the diff.
+        Uses GitHub's API with `commit_id` and `line` parameters.
 
         Args:
             pr_number: PR number
             path: File path in the repo
             line: Line number to comment on (in the new/head version of the file)
             body: Comment text
-            position: Position in the diff (optional, will be calculated if not provided)
+            position: Position in the diff (optional, deprecated parameter)
             max_retries: Maximum number of retry attempts (default: 5)
 
         Returns:
@@ -270,14 +280,15 @@ class GitHubClient:
 
         # Retry with exponential backoff
         for attempt in range(max_retries):
-            # Post inline comment using gh api with position parameter
+            # Post inline comment using gh api with line parameter (new API)
             result = subprocess.run([
                 "gh", "api", f"repos/{REPO}/pulls/{pr_number}/comments",
                 "-X", "POST",
                 "-f", f"body={body}",
                 "-f", f"path={path}",
-                "-F", f"position={position}",
+                "-F", f"line={line}",
                 "-f", f"commit_id={commit_id}",
+                "-f", "side=RIGHT",
             ], capture_output=True, text=True)
 
             if result.returncode == 0:
@@ -285,8 +296,21 @@ class GitHubClient:
 
             error_msg = result.stderr.strip()
 
-            # If it's a validation error (HTTP 422), don't retry - the position is invalid
+            # If it's a validation error (HTTP 422), try with position parameter
             if "422" in error_msg or "Validation Failed" in error_msg:
+                # Fall back to position-based comment
+                result = subprocess.run([
+                    "gh", "api", f"repos/{REPO}/pulls/{pr_number}/comments",
+                    "-X", "POST",
+                    "-f", f"body={body}",
+                    "-f", f"path={path}",
+                    "-F", f"position={position}",
+                    "-f", f"commit_id={commit_id}",
+                ], capture_output=True, text=True)
+
+                if result.returncode == 0:
+                    return {"posted_via": "gh_api_inline_position", "pr_number": pr_number, "path": path, "line": line, "position": position, "attempts": attempt + 1}
+
                 break
 
             # For other errors, retry with exponential backoff
@@ -308,7 +332,7 @@ class GitHubClient:
 
     def _get_pr_head_sha(self, pr_number: int) -> str:
         """Get the head commit SHA of a PR."""
-        pr = self._get(f"/pulls/{pr_number}")
+        pr = _run_gh_api(f"repos/{REPO}/pulls/{pr_number}")
         return pr["head"]["sha"]
 
     # -- Inline comment workflow -----------------------------------------
@@ -610,18 +634,13 @@ class GitHubClient:
                 ]
             }
         """
-        # Use GitHub Code Search API
+        # Use GitHub Code Search API via gh api
         query = f"{symbol_name} repo:{REPO}"
         if search_paths:
             query += f" path:{search_paths[0]}"
 
         try:
-            resp = self._http.get(
-                "https://api.github.com/search/code",
-                params={"q": query, "per_page": 3}
-            )
-            resp.raise_for_status()
-            results = resp.json()
+            results = _run_gh_api("search/code", "-F", f"q={query}", "-F", "per_page=3")
 
             locations = []
             for item in results.get("items", [])[:3]:
@@ -631,8 +650,8 @@ class GitHubClient:
                     lines = content.split("\n")
 
                     # Search for definition
-                    for i, line in enumerate(lines, 1):
-                        if f"def {symbol_name}" in line or f"class {symbol_name}" in line:
+                    for i, line_content in enumerate(lines, 1):
+                        if f"def {symbol_name}" in line_content or f"class {symbol_name}" in line_content:
                             # Get 10-line context
                             start = max(0, i-5)
                             end = min(len(lines), i+5)
@@ -644,7 +663,7 @@ class GitHubClient:
                                 "context": context
                             })
                             break
-                except:
+                except Exception:
                     continue
 
             return {
@@ -652,7 +671,7 @@ class GitHubClient:
                 "found": len(locations) > 0,
                 "locations": locations
             }
-        except:
+        except Exception:
             return {
                 "symbol": symbol_name,
                 "found": False,
@@ -708,20 +727,13 @@ class GitHubClient:
                 "exists": True
             })
 
-        # Verify existence
+        # Verify existence (simplified - skip for directories)
         for config in relevant_configs:
             try:
-                self._http.head(f"{BASE}/contents/{config['path']}")
+                if not config["path"].endswith("/"):
+                    self.fetch_file(config["path"])
                 config["exists"] = True
-            except:
+            except Exception:
                 config["exists"] = False
 
         return {"relevant_configs": relevant_configs}
-
-    # -- Helpers ---------------------------------------------------------
-
-    def _get(self, path: str, params: dict | None = None) -> dict | list:
-        url = f"{BASE}{path}" if path.startswith("/") else path
-        resp = self._http.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json()
