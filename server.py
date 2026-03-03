@@ -400,12 +400,29 @@ def review_pr_with_inline(pr_number: int) -> str:
 - A large feature should have 3-5 comments on the most critical gaps
 - Do NOT post comments on minor style issues or nice-to-haves
 
-1. Call fetch_pr to get PR metadata and diff
+1. Call fetch_pr to get PR metadata, diff, AND related_context (includes related_issues, author_recent_prs, referenced_prs_from_history)
 2. Call parse_diff_for_review_lines to identify lines needing comments
 3. Call fetch_linked_refs to get context from referenced issues/PRs
 4. Call get_pr_type_guidance with the PR title to get type-specific review focus
 5. Call get_knowledge to load project conventions, architecture, and vllm-omni concepts
 6. Analyze the diff critically and post ONLY inline comments (no summary):
+
+   **Analyze Related Context (from fetch_pr response):**
+   The `related_context` field provides valuable signals:
+
+   - **related_issues**: Open issues matching keywords from the PR. If the PR claims to fix something but there's an open issue saying it's already fixed, that's a red flag.
+
+   - **author_recent_prs**: The author's recent PRs. If they've attempted similar fixes before, check if this PR addresses the root cause or just adds another band-aid.
+
+   - **referenced_prs_from_history**: PRs mentioned in commit history on modified files. If previous PRs touched the same code, understand why another fix is needed.
+
+   **Elevate issue scores when patterns found:**
+   - Missing test alone → score 50 (worth mentioning)
+   - Missing test + same bug fixed twice in history → score 100 (blocker, demand explanation)
+   - New API + author has history of untested PRs → score 100 (blocker)
+
+   **Cite context in comments when escalating:**
+   Example: "Issue #1477 documented this crash. PR #1471 already attempted a fix in schedule(). This PR adds another fix in update_from_output() - why is a second fix needed? Is the root cause understood?"
 
    **IMPORTANT: Read vllm-omni-concepts.md to understand:**
    - Omni vs AsyncOmni (sync vs async_chunk execution)

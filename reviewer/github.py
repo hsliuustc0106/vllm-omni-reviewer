@@ -89,6 +89,180 @@ def detect_pr_types(title: str) -> list[tuple[str, str]]:
 class GitHubClient:
     """GitHub API client using gh CLI for authentication."""
 
+    # -- Keyword extraction for related context -------------------------
+
+    # Stop words to filter from keyword extraction
+    _KEYWORD_STOP_WORDS = {
+        "fix", "add", "update", "remove", "the", "for", "with", "from",
+        "this", "that", "when", "where", "which", "what", "how", "why",
+        "issue", "issues", "pull", "request", "pr", "prs", "bug", "bugs",
+    }
+
+    def _extract_keywords(self, title: str, body: str, files: list[str]) -> list[str]:
+        """Extract search keywords from PR metadata.
+
+        Sources:
+        1. PR title - extract technical terms
+        2. PR body - extract from first 500 chars
+        3. File paths - extract component names
+
+        Returns max 5 unique keywords.
+        """
+        import re
+        keywords = set()
+
+        # 1. Remove PR type prefixes from title
+        clean_title = title
+        for pattern, _ in _PR_TYPE_PATTERNS:
+            clean_title = pattern.sub("", clean_title)
+        clean_title = clean_title.strip()
+
+        # 2. Extract quoted identifiers (e.g., "transformers 5.x", 'num_cached_tokens')
+        for match in re.finditer(r'["\']([^"\']+)["\']', f"{clean_title} {body[:500]}"):
+            kw = match.group(1).strip()
+            if len(kw) > 2 and kw.lower() not in self._KEYWORD_STOP_WORDS:
+                keywords.add(kw)
+
+        # 3. Extract technical terms from title (CamelCase, snake_case, hyphenated)
+        for term in re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b', clean_title):  # CamelCase
+            if term.lower() not in self._KEYWORD_STOP_WORDS:
+                keywords.add(term)
+        for term in re.findall(r'\b[a-z]+(?:_[a-z]+)+\b', clean_title):  # snake_case
+            if term.lower() not in self._KEYWORD_STOP_WORDS:
+                keywords.add(term)
+        for term in re.findall(r'\b[a-z]+(?:-[a-z]+)+\b', clean_title):  # hyphenated
+            if term.lower() not in self._KEYWORD_STOP_WORDS:
+                keywords.add(term)
+
+        # 4. Extract component names from file paths
+        for path in files[:3]:  # Limit to first 3 files
+            filename = path.split("/")[-1].replace(".py", "").replace(".yaml", "")
+            # Convert snake_case to PascalCase for search
+            if "_" in filename:
+                pascal = "".join(word.capitalize() for word in filename.split("_"))
+                keywords.add(pascal)
+            elif len(filename) > 3:
+                keywords.add(filename)
+
+        # 5. Add significant words from title (not in stop words)
+        title_words = re.findall(r'\b[a-zA-Z]{4,}\b', clean_title)
+        for word in title_words:
+            if word.lower() not in self._KEYWORD_STOP_WORDS:
+                keywords.add(word)
+
+        # Return max 5 keywords, sorted by specificity (longer first)
+        return sorted(keywords, key=len, reverse=True)[:5]
+
+    def _search_related_issues(self, keywords: list[str], limit: int = 5) -> list[dict]:
+        """Search for issues matching keywords using GitHub Search API.
+
+        Query format: "keyword1 OR keyword2 repo:vllm-project/vllm-omni is:issue"
+
+        Returns list of dicts with: number, title, summary (200 chars), state.
+        Gracefully returns empty list on rate limit or errors.
+        """
+        if not keywords:
+            return []
+
+        # Build search query with OR between keywords
+        keyword_query = " OR ".join(f'"{kw}"' for kw in keywords[:3])  # Limit to 3 keywords
+        query = f"{keyword_query} repo:{REPO} is:issue"
+
+        try:
+            results = _run_gh_api("search/issues", "-F", f"q={query}", "-F", f"per_page={limit}")
+
+            items = []
+            for item in results.get("items", [])[:limit]:
+                body = item.get("body") or ""
+                summary = body[:200] + ("..." if len(body) > 200 else "")
+                items.append({
+                    "number": item["number"],
+                    "title": item["title"],
+                    "summary": summary,
+                    "state": item["state"],
+                })
+            return items
+        except Exception:
+            # Graceful degradation on rate limit or other errors
+            return []
+
+    def _get_author_recent_prs(self, author: str, limit: int = 5) -> list[dict]:
+        """Get author's recent PRs.
+
+        Returns list of dicts with: number, title, summary (200 chars), state.
+        """
+        query = f"author:{author} repo:{REPO} is:pr"
+
+        try:
+            results = _run_gh_api("search/issues", "-F", f"q={query}", "-F", f"per_page={limit}", "-F", "sort=updated")
+
+            items = []
+            for item in results.get("items", [])[:limit]:
+                body = item.get("body") or ""
+                summary = body[:200] + ("..." if len(body) > 200 else "")
+                items.append({
+                    "number": item["number"],
+                    "title": item["title"],
+                    "summary": summary,
+                    "state": item["state"],
+                })
+            return items
+        except Exception:
+            # Graceful degradation on rate limit or other errors
+            return []
+
+    def _get_prs_from_commit_history(self, files: list[str], limit: int = 5) -> list[dict]:
+        """Extract PR numbers from commit messages on modified files.
+
+        Parses commit messages for patterns like "#1471", "PR #1471", "Fixes #123".
+        Returns list of dicts with: number, title, summary, state.
+        """
+        if not files:
+            return []
+
+        pr_numbers = set()
+        pr_ref_pattern = re.compile(r"(?:PR\s*)?#(\d{3,})|(?:Fixes|Closes)\s+#(\d{3,})", re.IGNORECASE)
+
+        # Check commits for first 3 modified files
+        for file_path in files[:3]:
+            try:
+                # Get recent commits for this file
+                commits = _run_gh_api(
+                    f"repos/{REPO}/commits",
+                    "-F", f"path={file_path}",
+                    "-F", "per_page=10"
+                )
+
+                for commit in (commits if isinstance(commits, list) else []):
+                    message = commit.get("commit", {}).get("message", "")
+                    for match in pr_ref_pattern.finditer(message):
+                        num = match.group(1) or match.group(2)
+                        if num:
+                            pr_numbers.add(int(num))
+            except Exception:
+                continue
+
+        if not pr_numbers:
+            return []
+
+        # Fetch PR details for found numbers
+        items = []
+        for num in sorted(pr_numbers, reverse=True)[:limit]:
+            try:
+                data = _run_gh_api(f"repos/{REPO}/pulls/{num}")
+                body = data.get("body") or ""
+                summary = body[:200] + ("..." if len(body) > 200 else "")
+                items.append({
+                    "number": data["number"],
+                    "title": data["title"],
+                    "summary": summary,
+                    "state": data["state"],
+                })
+            except Exception:
+                continue
+
+        return items[:limit]
+
     # -- PR metadata + diff + comments -----------------------------------
 
     def fetch_pr(self, number: int) -> dict:
@@ -113,7 +287,8 @@ class GitHubClient:
 
         changed_files = [f["filename"] for f in files] if isinstance(files, list) else []
 
-        return {
+        # Build base result
+        result = {
             "number": pr["number"],
             "title": pr["title"],
             "body": pr.get("body") or "",
@@ -146,6 +321,29 @@ class GitHubClient:
                 for r in (reviews if isinstance(reviews, list) else [])
             ],
         }
+
+        # Add related context (graceful degradation for each category)
+        related_context = {}
+
+        try:
+            keywords = self._extract_keywords(pr["title"], pr.get("body") or "", changed_files)
+            related_context["related_issues"] = self._search_related_issues(keywords)
+        except Exception:
+            related_context["related_issues"] = []
+
+        try:
+            related_context["author_recent_prs"] = self._get_author_recent_prs(pr["user"]["login"])
+        except Exception:
+            related_context["author_recent_prs"] = []
+
+        try:
+            related_context["referenced_prs_from_history"] = self._get_prs_from_commit_history(changed_files)
+        except Exception:
+            related_context["referenced_prs_from_history"] = []
+
+        result["related_context"] = related_context
+
+        return result
 
     def fetch_diff(self, number: int) -> str:
         """Fetch raw unified diff for a PR."""
