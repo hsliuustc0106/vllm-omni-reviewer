@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from urllib.parse import quote
 
 REPO = "vllm-project/vllm-omni"
 DIFF_CHAR_LIMIT = 200_000
@@ -169,7 +170,9 @@ class GitHubClient:
         query = f"{keyword_query} repo:{REPO} is:issue"
 
         try:
-            results = _run_gh_api("search/issues", "-F", f"q={query}", "-F", f"per_page={limit}")
+            # Use query params in URL path (GitHub Search API requires this)
+            endpoint = f"search/issues?q={quote(query)}&per_page={limit}"
+            results = _run_gh_api(endpoint)
 
             items = []
             for item in results.get("items", [])[:limit]:
@@ -194,7 +197,9 @@ class GitHubClient:
         query = f"author:{author} repo:{REPO} is:pr"
 
         try:
-            results = _run_gh_api("search/issues", "-F", f"q={query}", "-F", f"per_page={limit}", "-F", "sort=updated")
+            # Use query params in URL path (GitHub Search API requires this)
+            endpoint = f"search/issues?q={quote(query)}&per_page={limit}&sort=updated"
+            results = _run_gh_api(endpoint)
 
             items = []
             for item in results.get("items", [])[:limit]:
